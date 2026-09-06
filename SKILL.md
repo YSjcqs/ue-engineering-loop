@@ -1,6 +1,12 @@
 ---
 name: ue-engineering-loop
-description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、六阶段状态机、T0-T4 证据阶梯）× UE 领域实测定论（编译踩坑、运行时结论、进程卫生）× 通用 Slate 控件树自动化（SlateInspectorToolset ref 级操作 + 桌面自动化救援）。以 RiderMCP 为编译最高优先级（build_solution_start 主入口），强制引擎测试闭环与「禁止自动全量 rebuild」红线。适用场景：UE 项目开发迭代、bug 修复、编译调试、引擎内测试验证、长任务多会话开发、Slate 编辑器 UI/自定义工具的自动化操作与调试、蓝图/graph 控件自动化（蓝图仅为已验证案例）。
+description: 在 UE5 C++/蓝图项目开发、编译调试、Slate 编辑器 UI 自动化、bug 修复、引擎内测试、长任务多会话推进时使用。覆盖：五 Gate 工程闭环、R8 rebuild 禁令、Slate 控件树 ref 级操作、headless Spec 验证、MCP 四通道卫生。不覆盖：纯美术资产创作、材质表达式调试、非 UE C++ 项目。
+description_en: Use for UE5 C++/Blueprint project development, build debugging, Slate editor UI automation, bug fixing, in-engine testing, and long-task multi-session workflows. Covers: 5-Gate engineering loop, R8 rebuild ban, Slate widget tree ref-level operations, headless Spec validation, MCP 4-channel hygiene. Not for: pure art asset creation, material expression debugging, non-UE C++ projects.
+version: 1.0
+engine_version: "UE 5.8"
+min_rider_version: "2025.2"
+last_updated: "2026-09-06"
+canonical_path: "F:/AIGC/UnrealDev/ue-engineering-loop"
 ---
 
 # ue-engineering-loop — UE 全栈开发工程协议
@@ -12,6 +18,8 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 > 违反任何 Gate 的产出一律视为「未完成」。
 >
 > **文档分层（按需加载）**：本文件只放每次必读的骨架与红线；完整说明、模板、踩坑清单一律在 `references/`。
+>
+> **★ Quick Start（3 行启动）**：进入 UE 项目 → 跑 `scripts/env_health_check.ps1` → 按 §1 任务路由 → 需求门 state-back → 按 §3 编译（`build_solution_start` 主入口）→ 按 §2.4 闭环验证 → 交接门收口。
 
 ---
 
@@ -164,14 +172,18 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 
 ### 3.2 ★ R8：禁止自动全量 rebuild（红线）
 
-> 背景：UE 编译成本极高（增量 40~90s，全量可达 1.5h）；实测 `Build.version is newer` 触发 makefile 重建 = 4517 个 action。AI 一次「顺手 rebuild」可能吃掉用户数小时。
+> 背景：UE 编译成本极高（增量 40~90s，全量可达 1.5h）；实测 `Build.version is newer` 触发 makefile 重建 = **4517 个 action**。AI 一次「顺手 rebuild」可能吃掉用户数小时。
+>
+> **★ R8 是五大红线之首（§6 ★1）**。本节为速记入口，**完整规则、报备话术、违反后果与相关实测**见权威位置：`references/UE_BUILD_PITFALLS.md` §1.6。
 
-1. **禁止自主发起任何 clean / rebuild / 全量重编**：包括但不限于——删除 `Intermediate/`、`Binaries/`、`Saved/`、makefile、`Build.bat -clean`、UBT `-Rebuild`、改动 `Build.version` 等一切会触发形式。**默认只允许增量编译**。
-2. **禁止把「删中间产物重编」当排错手段**：编译报错的正确路径 = 读错误原文 → 查 `UE_BUILD_PITFALLS.md` → 修根因（如 LNK1136 加 `-NoUBA`，而不是 rebuild）。
-3. **用户明确要求时才可全量/rebuild，且一次一确认**：必须先报备——触发原因、预估 action 规模与时长、影响范围——获得**针对该一次操作的明确同意**后执行；同意不延续、不得批量预授权。
-   > 报备话术：「编译需要全量 rebuild：原因 X，预估 N 个 action / 约 M 分钟，影响范围 Y。是否执行？(是/否)」
-4. **超时/卡住不是 rebuild 理由**：`-WaitMutex` 等锁、IDE 排队、超时后查进程——一律等待或排查，不得「换全量编译试试」。
-5. 违反后果与其他 Gate 一致：**该次编译结果无效，视为未验证**。
+**速记三句话**：
+1. **禁止自主发起任何 clean / rebuild / 全量重编**——含删除 `Intermediate/`/`Binaries/`/`Saved/`、`Build.bat -clean`、UBT `-Rebuild`、改动 `Build.version` 等一切形式。默认只允许增量编译。
+2. **禁止把「删中间产物重编」当排错手段**——编译报错读原文 → 查 `UE_BUILD_PITFALLS.md` → 修根因（如 LNK1136 加 `-NoUBA`，不是 rebuild）。
+3. **用户明确要求才可全量/rebuild，且一次一确认**——先报备（触发原因 / 预估 action 规模与时长 / 影响范围）→ 获针对该一次操作的明确同意 → 执行；同意不延续、不得批量预授权。
+
+> 报备话术（完整版见 `UE_BUILD_PITFALLS.md` §1.6）：「编译需要全量 rebuild：原因 X，预估 N 个 action / 约 M 分钟，影响范围 Y。是否执行？(是/否)」
+>
+> 违反后果：该次编译结果无效，视为未验证（与所有 Gate 违反一致）。超时/卡住不是 rebuild 理由——`-WaitMutex` 等锁、IDE 排队、超时后查进程——一律等待或排查。
 
 ### 3.3 零引擎侵入（红线）
 
@@ -213,35 +225,19 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 
 ---
 
-## 6. 禁忌清单（红线，合并去重）
+## 6. 五大红线（★ 最优先记忆，完整 27 条见 `references/TABOO_LIST.md`）
 
-1. 不读知识文件/源码就动手（读门）。
-2. 凭记忆写项目内/引擎 API、不核实签名（实测大量 API 名与直觉不符，见 `UE_RUNTIME_GOTCHAS.md` §5）。
-3. 不读日志就诊断（Bug 协议）。
-4. 不跑引擎测试就说功能正确（R2/R6）；未经用户确认就跳过引擎内测试（R7/硬规则 7）。
-5. 在编译阶段探测/断言引擎通道状态并据此降级（硬规则 1 时序纪律）。
-6. 机械照抄配置文件里的项目路径（硬规则 3）。
-7. 编译结果不贴输出、测试结果无证据（验证门）。
-8. 改完不验证就交付；不更新状态就结束会话（交接门）。
-9. 一次改动越过任务边界、自行改需求（需求门）；扩大范围、破坏性操作前不暂停说明。
-10. 反复试错编译（先读代码确认 API，一次写对）。
-11. RiderMCP 不可达时未经用户授权擅自命令行编译（§3.1）。
-12. 把调用超时当失败而盲目重试（硬规则 4）——先查进程，否则制造双实例。
-13. 按进程名杀引擎——会误杀用户编辑器；走 PID 三步协议（`PROCESS_HYGIENE.md`）。
-14. 用过窗口控制不释放——overlay 残留（`PROCESS_HYGIENE.md` §2）。
-15. 把「零测试执行」当验证通过（★ 最危险的假成功）——headless 必须看退出码（2=零测试=失败）。
-16. 发现设计文档与实测不符时擅自改原文档——写入 STATUS「勘误候选」区（`CONTEXT_MANAGEMENT.md`）。
-17. 把本可自动化的验证推给用户——「能否 X」类二元事实一律自动化；只有主观判断交给用户。
-18. 一阶段完成后不清理就进下一阶段——清理清单 + 独立 commit。
-19. 低层绿灯冒充高层完成（T3/T4 缺失时宣称功能完成）；用旧版本产物的旧绿灯证明当前代码。
-20. 失败后无新证据地重试（Zero-Delta Retry）。
-21. 并行时多个 Agent 同时写同一文件——一个文件只有一个写入 owner（`PARALLEL_ORCHESTRATION.md`）。
-22. **自主 clean/rebuild/全量重编，或删除中间产物当排错手段**（§3.2 R8）。
-23. **未经用户逐次授权修改引擎源码**（§3.3 零引擎侵入）。
-24. **在 Slate graph 控件上用坐标点 pin**（几何在节点框外，9/9 失败）——一律 ref 操作（`PITFALLS_SLATE_UI.md` §2.3）。
-25. 用坐标硬试/猜坐标定位 UI——不能读图就用 ref/UIA/引擎接口，**不要猜**。
-26. **引擎启动无响应时无限等待或重发启动**，而不用实机通道截图+日志取证（硬规则 13）——轮询必须有上限，超限换取证。
-27. **替用户点有状态弹窗的按钮**（重建模块/迁移/禁插件/Assert 的 Yes-No/Crash Reporter）——取证后交用户，不猜按钮语义。
+> 所有 27 条禁忌都是红线，违反任意一条按 Gate 违反处理（产出无效、回退重做）。以下五条单列是因为代价灾难性，且 AI 在疲劳或上下文压缩时最易遗忘。
+
+| # | 红线 | 代价 | 权威位置 |
+|---|---|---|---|
+| **★1** | **自主 clean/rebuild/全量重编**，或删除中间产物当排错手段 | 用户数小时（4517 actions / 1.5h） | §3.2 R8 / `UE_BUILD_PITFALLS.md` §1.6 |
+| **★2** | **不跑引擎测试就宣称功能正确**；未经用户确认跳过引擎内测试；把「零测试执行」当通过 | 假成功（最危险失效模式） | §2.4 R2/R6 / `QA_EVIDENCE_LADDER.md` |
+| **★3** | **未经用户逐次授权修改引擎源码**（`Engine/` 树内任何文件） | 引擎污染、升级丢失补丁 | §3.3 零引擎侵入 |
+| **★4** | **替用户点有状态弹窗的按钮**（重建模块/迁移/禁插件/Assert 的 Yes-No/Crash Reporter） | 触发破坏性操作、状态污染 | `STARTUP_STUCK_DIAGNOSIS.md` §2.3 |
+| **★5** | **失败后无新证据地重试**（Zero-Delta Retry） | 错误方向扩大、补丁堆叠 | `PROMPT_CONTRACTS.md` §5 |
+
+> 完整 27 条（含上述五条的展开与其他 22 条：读门/证据门/MCP 通道/进程卫生/Slate UI/范围/并行等主题）见 `references/TABOO_LIST.md`，每条标注编号 + 关联 Gate + 文件位置，便于追溯根因。
 
 ---
 
@@ -249,12 +245,13 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 
 ```
 ue-engineering-loop/
-├── SKILL.md                          # 本文件（协议总纲，每次必读）
+├── SKILL.md                          # 本文件（协议总纲 + 五大红线 + Quick Start，每次必读）
 ├── references/                       # 按需查阅
+│   ├── TABOO_LIST.md                 # ★ 完整 27 条禁忌清单（按主题分组 + 关联 Gate/文件位置）
 │   ├── MCP_CHANNELS.md               # 四通道能力/连接检查/排查树/配置启用/环境接入（三源合一）
 │   ├── SLATE_AUTOMATION.md           # ★ 通用 Slate 控件树自动化（能力 + 项目侧 role 注册 + 蓝图参考案例）
 │   ├── PITFALLS_SLATE_UI.md          # Slate 自动化踩坑全集（隐形控件/死锁救援/输入；改引擎补丁=备选附录）
-│   ├── UE_BUILD_PITFALLS.md          # 编译踩坑全集（UHT/UBT/构建通道/R8 rebuild 禁令）
+│   ├── UE_BUILD_PITFALLS.md          # 编译踩坑全集（UHT/UBT/构建通道/★ R8 权威位置 §1.6）
 │   ├── UE_RUNTIME_GOTCHAS.md         # 运行时实测定论（DllMain/序列化/接口 BNE/多态/API 真名）
 │   ├── QA_EVIDENCE_LADDER.md         # T0-T4 证据阶梯 + 测试闭环细则 + 失败场景速查 + Automation 设计法
 │   ├── STARTUP_STUCK_DIAGNOSIS.md    # ★ 引擎启动卡死与弹窗排查（截图取证/弹窗决策表/崩溃取证/禁止盲等）
@@ -265,18 +262,19 @@ ue-engineering-loop/
 │   ├── PARALLEL_ORCHESTRATION.md     # 并行按冲突域（lane/barrier/单一集成者）
 │   ├── SKILL_DISTILLATION.md         # 经验→Skill 提炼协议
 │   ├── PROCESS_HYGIENE.md            # 进程与窗口卫生（PID 跟踪/清理清单）
-│   ├── EXPERIENCE_INDEX.md           # ★ 按症状查经验的索引表
+│   ├── EXPERIENCE_INDEX.md           # ★ 最值得记住十条 + 案例锚点（症状路由见 SKILL.md §1）
 │   └── CASE_STUDY_UEMCP_OUTAGE.md    # 实测案例锚点（引擎在跑但通道连不上）
 └── scripts/
     ├── env_health_check.ps1          # 能力探测（端点参数化 + 进程 + 端口 + .uproject 插件检查）
-    ├── engine_pid_tracker.ps1        # 引擎 PID 跟踪：snapshot/diff/cleanup（禁按名杀）
-    ├── run_spec_headless.ps1         # headless 跑 Spec（推荐默认，~40s，自动退出，退出码契约）
+    ├── engine_pid_tracker.ps1        # 引擎 PID 跟踪：snapshot/diff/cleanup（禁按名杀，跨项目防护）
+    ├── run_spec_headless.ps1         # headless 跑 Spec（~40s，自动退出，退出码契约；-SelfTest 验证契约）
+    ├── dump_mcp_catalog.py           # ★ 重新生成 mcp_catalog.json（UE 升级后跑，见 MCP_CHANNELS.md §2.2）
     ├── rider_call.py                 # RiderMCP(:64482) HTTP 直连调用器（同进程完成握手+调用）
     ├── mcp_call.py                   # UnrealEngineMCP(:8000) 调用器（依赖同目录 mcp_catalog.json）
     ├── wb_call.py                    # Workbench MCP(:3939) 调用器
-    └── mcp_catalog.json              # 52 工具集/830 工具目录（运行时依赖，勿手改）
+    └── mcp_catalog.json              # 52 工具集/830 工具目录（运行时依赖，用 dump_mcp_catalog.py 重新生成）
 ```
 
-> **快速开始**：进入 UE 项目 → 跑 `env_health_check.ps1` → 按 §1 路由 → 需求门 state-back → M0 只读调查 → 按状态机推进 → 编译走 §3（build_solution_start 主入口，R8 禁令）→ 测试走 §2.4 闭环 → 交接门收口。
+> **详细流程速记**（顶部 Quick Start 的展开版）：进入 UE 项目 → 跑 `env_health_check.ps1` → 按 §1 路由 → 需求门 state-back → M0 只读调查 → 按状态机推进 → 编译走 §3（build_solution_start 主入口，R8 禁令）→ 测试走 §2.4 闭环 → 交接门收口。
 >
 > **维护约定**：SKILL.md 只放「每次必读」的骨架与红线；详细话术、完整说明、踩坑清单一律放 `references/`。领域实测结论标注适用版本（多数为 UE 5.x 实测，跨版本使用前先小成本验证）。

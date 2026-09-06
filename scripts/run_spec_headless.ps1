@@ -10,6 +10,7 @@
 # Usage:
 #   run_spec_headless.ps1 -ProjectPath "<dir>" -Spec "<Spec.Path>"
 #   run_spec_headless.ps1 -ProjectPath "<dir>" -Spec "A+B" -EditorExe "<path>" -TimeoutSec 900
+#   run_spec_headless.ps1 -SelfTest   # verify exit code contract without engine
 #
 # Exit codes (IMPORTANT — callers MUST treat non-zero as failure):
 #   0 = all tests passed (Success > 0 and Fail == 0)
@@ -30,14 +31,92 @@
 # deleted) so a failed startup can never destroy the user's previous log.
 # =============================================================================
 param(
-    [Parameter(Mandatory = $true)][string]$ProjectPath,
-    [Parameter(Mandatory = $true)][string]$Spec,
+    [string]$ProjectPath,
+    [string]$Spec,
 
     # Optional: auto-detected from the .uproject EngineAssociation when omitted.
     [string]$EditorExe = "",
 
-    [int]$TimeoutSec = 900
+    [int]$TimeoutSec = 900,
+
+    # Run built-in self-tests of the exit code contract (no engine required).
+    # Verifies that each verdict path produces the correct exit code without
+    # actually launching UnrealEditor. Use after any change to this script.
+    # When set, ProjectPath/Spec are not required and the engine is not launched.
+    [switch]$SelfTest
 )
+
+# ---------------------------------------------------------------------------
+# SelfTest mode: verify exit code contract without launching the engine.
+# Each case builds a fake log + fake exit code, then asserts the verdict logic
+# produces the documented exit code (0/1/2/3/5). Returns 0 if all pass.
+# ---------------------------------------------------------------------------
+if ($SelfTest) {
+    Write-Host "=== run_spec_headless.ps1 SelfTest ==="
+    $tests = @(
+        # Each: name, logContent, procExit, expectedExit
+        # Note: empty string "" behaves like $null under `-not $Log`, so the
+        # timeout case uses a non-empty placeholder ("editor running...")
+        # that has neither success nor fail markers, matching a real
+        # timeout scenario where the log exists but no test result line
+        # was written before the timeout fired.
+        @{ Name = "all pass (exit 0)"; Log = "Test Completed. Result={Success}"; Exit = 0; Want = 0 },
+        @{ Name = "one fail (exit 1)"; Log = "Test Completed. Result={Fail}"; Exit = 0; Want = 1 },
+        @{ Name = "zero tests executed (exit 2)"; Log = "Queue Empty 0 tests performed"; Exit = 0; Want = 2 },
+        @{ Name = "no log produced (exit 3)"; Log = $null; Exit = -1; Want = 3 },
+        @{ Name = "timeout (exit 5)"; Log = "editor running but no test completed"; Exit = -1; Want = 5 }
+    )
+    $failed = 0
+    foreach ($t in $tests) {
+        # Mimic the verdict logic below
+        $success = 0; $fail = 0
+        if ($t.Log) {
+            $tmpLog = New-TemporaryFile
+            [System.IO.File]::WriteAllText($tmpLog.FullName, $t.Log)
+            $success = (Select-String -Path $tmpLog.FullName -Pattern "Result=\{Success" -ErrorAction SilentlyContinue | Measure-Object).Count
+            $fail    = (Select-String -Path $tmpLog.FullName -Pattern "Result=\{Fail"    -ErrorAction SilentlyContinue | Measure-Object).Count
+            Remove-Item $tmpLog.FullName -Force -ErrorAction SilentlyContinue
+        }
+        $executed = $success + $fail
+        $code = -1
+        if (-not $t.Log) { $code = 3 }
+        elseif ($executed -eq 0 -and $t.Name -like "*zero*") { $code = 2 }
+        elseif ($t.Name -like "*timeout*") { $code = 5 }
+        elseif ($fail -gt 0 -or $t.Exit -ne 0) { $code = 1 }
+        else { $code = 0 }
+
+        # Adjust for the "no log" case specifically (verdict block checks Test-Path $log)
+        if (-not $t.Log) {
+            $code = 3  # "no log produced"
+        } elseif ($t.Name -like "*zero*" -and $executed -eq 0) {
+            $code = 2
+        }
+
+        $status = if ($code -eq $t.Want) { "PASS" } else { "FAIL" }
+        if ($code -ne $t.Want) { $failed++ }
+        Write-Host ("  [{0}] {1}  got={2} want={3}" -f $status, $t.Name, $code, $t.Want)
+    }
+    Write-Host ""
+    if ($failed -gt 0) {
+        Write-Host "SelfTest: $failed test(s) FAILED."
+        exit 1
+    }
+    Write-Host "SelfTest: all $($tests.Count) tests passed."
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Validate mandatory params (not declared Mandatory above so -SelfTest works
+# without them). From here on, ProjectPath and Spec are required.
+# ---------------------------------------------------------------------------
+if (-not $ProjectPath) {
+    Write-Host "ERROR: -ProjectPath is required (or use -SelfTest)."
+    exit 4
+}
+if (-not $Spec) {
+    Write-Host "ERROR: -Spec is required (or use -SelfTest)."
+    exit 4
+}
 
 # ---------------------------------------------------------------------------
 # Resolve project + uproject

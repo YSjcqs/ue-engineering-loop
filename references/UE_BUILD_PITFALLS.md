@@ -92,8 +92,10 @@ IDE 集成通道的编译/运行配置/文件检查工具，凡涉及项目的�
 > **注意**：MSBuild 进程若处于「方案构建队列」中，杀掉会被 IDE 自动重启（实测），必须由用户在 IDE UI 停止。
 > 但**与 UE 编译无关的**临时 MSBuild 进程（如跑 `.proj` 临时文件）**不影响 UE 编译**，不要误判为阻塞（曾误判过一次）。
 
-### 1.6 ★ R8 Rebuild 禁令（红线，SKILL.md §3.2 的完整说明）
+### 1.6 ★ R8 Rebuild 禁令（★ 权威位置，SKILL.md §3.2 与 §6 ★1 的完整展开）
 
+> **本节是 R8 的权威完整版**。SKILL.md §3.2 仅保留速记三句话 + 指针；本节含完整规则、报备话术、违反后果与相关实测。
+>
 > 背景：UE 编译成本极高（增量 40~90s，全量可达 1.5h）；实测 `Build.version is newer` 触发 makefile 重建 = 4517 个 action、二三十分钟起步。AI 一次「顺手 rebuild」可能吃掉用户数小时。
 
 1. **禁止自主发起任何 clean / rebuild / 全量重编**：包括但不限于——删除 `Intermediate/`、`Binaries/`、`Saved/`、makefile，`Build.bat -clean`，UBT `-Rebuild`，改动 `Build.version` 等一切触发形式。**默认只允许增量编译**。

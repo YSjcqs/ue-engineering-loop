@@ -65,6 +65,12 @@ python scripts/rider_call.py '{"name":"get_solution_projects","arguments":{"root
 - 执行 Python（`unreal` 模块 API）
 
 > 所有工具清单以实际连接后 `tools/list` / `list_toolsets` 返回为准，**禁止凭文档臆测工具名**。**工具集缺失的判定与处置见 §5.2 排查树⑥**。调用约定三套并存见 `SLATE_AUTOMATION.md` §1。
+>
+> **★ 重新生成 mcp_catalog.json**：UE 升级或 AllToolsets 更新后，`scripts/mcp_catalog.json`（2.3 MB 快照，`mcp_call.py` 用来解析短 toolset 前缀到全限定名）会漂移。在引擎内通道链接成功的前提下，跑：
+> ```bash
+> python scripts/dump_mcp_catalog.py
+> ```
+> 它会调 `list_toolsets` + 逐个 `describe_toolset`，写出新 catalog 覆盖旧文件。退出码：0=成功，1=握手失败，2=工具集为空（AllToolsets 未启用？），3=写入失败。
 
 ### 2.3 实机通道（Workbench）
 

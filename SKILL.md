@@ -42,6 +42,7 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 | 运行时崩溃 / 序列化 / 接口 / 多态 / API 真名 | `references/UE_RUNTIME_GOTCHAS.md` |
 | Spec 编写 / headless / Python 边界 | `references/AUTOMATION_TESTING.md` |
 | MCP 连不上 / 排查树 / 配置与启用 | `references/MCP_CHANNELS.md` |
+| **启动引擎后卡住 / 疑似弹窗 / 崩溃报告器 / 循环等待无响应** | `references/STARTUP_STUCK_DIAGNOSIS.md`（截图→日志→决策表） |
 | **Slate 控件树自动化 / 编辑器 UI 操作 / 自定义工具调试** | `references/SLATE_AUTOMATION.md`（骨架速查见 §3.4） |
 | Slate 控件在快照里隐形 / MCP 全超时疑似死锁 | `references/PITFALLS_SLATE_UI.md` |
 | 多 Agent / 并行任务编排 | `references/PARALLEL_ORCHESTRATION.md` |
@@ -94,7 +95,9 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 ```
 ① 编译（IDE/构建通道，build_solution_start 主入口；贴真实输出）
     ↓
-② 启动/确认引擎（新产物启动；headless 跑 Spec 可直接替代②③④）
+② 启动/确认引擎（新产物启动；headless 跑 Spec 可直接替代②③④；
+   ★ 迟迟无窗口/疑似弹窗 → 启动卡死协议：Workbench 截图 + 窗口枚举 + 日志取证，
+     禁止盲等或重发启动 → references/STARTUP_STUCK_DIAGNOSIS.md）
     ↓
 ③ 等待引擎自动化通道链接（★ 轮询：探测→等5s→再探测，最多10次；
    前置条件 = 编译成功 + 新产物启动；链接后必须做工具级握手）
@@ -134,6 +137,7 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 10. **窗口与进程卫生**：用过 `window_control` 必须 `window_release`（红框 overlay 残留）；引擎进程只按 PID 三步协议清理（snapshot/diff/cleanup，务必带 `-ProjectPath`），**禁按名杀**。
 11. **headless 优先**：跑 Spec 默认 `run_spec_headless.ps1`；**必须看退出码**（0=通过，2=零测试=按失败）；仅需引擎内 Python 交互才走 MCP 模式。
 12. **链接 ≠ 可用**：探测 200/405 只说明端口活着，链接成功后必须做**工具级握手**（调用只读工具确认返回），否则不得宣称「已链接」。
+13. **引擎启动卡死 → 截图取证，不盲等**：编译成功后 5 分钟无主窗口 / 进程在但 :8000 不通且排查树正常 / 启动调用超时但进程在 / headless 超时数倍 / 用户报有弹窗——任一命中即走启动卡死协议：**实机通道截图 + 窗口枚举 + 日志取证 → 按弹窗决策表处置**（无害关闭类 AI 自动；有状态选择类/崩溃类取证后交用户）。轮询必须有上限，禁止把等待当处理（详见 `STARTUP_STUCK_DIAGNOSIS.md`）。
 
 ---
 
@@ -236,6 +240,8 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 23. **未经用户逐次授权修改引擎源码**（§3.3 零引擎侵入）。
 24. **在 Slate graph 控件上用坐标点 pin**（几何在节点框外，9/9 失败）——一律 ref 操作（`PITFALLS_SLATE_UI.md` §2.3）。
 25. 用坐标硬试/猜坐标定位 UI——不能读图就用 ref/UIA/引擎接口，**不要猜**。
+26. **引擎启动无响应时无限等待或重发启动**，而不用实机通道截图+日志取证（硬规则 13）——轮询必须有上限，超限换取证。
+27. **替用户点有状态弹窗的按钮**（重建模块/迁移/禁插件/Assert 的 Yes-No/Crash Reporter）——取证后交用户，不猜按钮语义。
 
 ---
 
@@ -251,6 +257,7 @@ ue-engineering-loop/
 │   ├── UE_BUILD_PITFALLS.md          # 编译踩坑全集（UHT/UBT/构建通道/R8 rebuild 禁令）
 │   ├── UE_RUNTIME_GOTCHAS.md         # 运行时实测定论（DllMain/序列化/接口 BNE/多态/API 真名）
 │   ├── QA_EVIDENCE_LADDER.md         # T0-T4 证据阶梯 + 测试闭环细则 + 失败场景速查 + Automation 设计法
+│   ├── STARTUP_STUCK_DIAGNOSIS.md    # ★ 引擎启动卡死与弹窗排查（截图取证/弹窗决策表/崩溃取证/禁止盲等）
 │   ├── AUTOMATION_TESTING.md         # 自动化验证手册（headless Spec/Spec 编写/Python 边界）
 │   ├── WORKFLOW_STATE_MACHINE.md     # 六阶段状态机详解 + Plan/Gate 模板 + GO/NO-GO
 │   ├── PROMPT_CONTRACTS.md           # 任务合同七要素 + 可复制 Prompt 模板

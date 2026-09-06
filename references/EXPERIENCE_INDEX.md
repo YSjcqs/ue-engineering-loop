@@ -59,6 +59,14 @@
 | 想改引擎源码实现能力 | 先看 SKILL.md §3.3 零引擎侵入红线；确需修改走 `PITFALLS_SLATE_UI.md` 附录 A 授权流程 |
 | 编译报 LNK1136（无关模块损坏） | `PITFALLS_SLATE_UI.md` §6 UBA 问题 → `-NoUBA`，不是 rebuild |
 
+### 启动卡死 / 弹窗类
+
+| 症状 / 任务 | 查哪篇 |
+|---|---|
+| **引擎启动后一直没窗口 / agent 循环等待像无响应** | `STARTUP_STUCK_DIAGNOSIS.md` §1-2（Workbench 截图取证 → 日志 → 决策表，禁止盲等） |
+| **屏幕上有弹窗**（Missing Modules / 崩溃报告器 / Assert / 项目迁移） | `STARTUP_STUCK_DIAGNOSIS.md` §2.3 决策表（哪些 AI 可自动关、哪些必须交用户） |
+| **引擎启动即崩溃 / 进程消失** | `STARTUP_STUCK_DIAGNOSIS.md` §2.2 崩溃取证（Saved/Crashes + CrashReporter） |
+
 ---
 
 ## 通用原则

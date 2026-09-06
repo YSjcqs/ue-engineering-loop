@@ -65,7 +65,12 @@ IDE 集成通道的编译/运行配置/文件检查工具，凡涉及项目的�
 2. **`rebuild` 参数（默认 false=增量）就是 R8 的管辖入口**：任何 `rebuild:true` 调用前必须按 R8 向用户报备并一次一确认。
 3. `get_run_configurations` 实测返回**海量引擎 Program target 的 "Uproject 配置"**（`BaseTextureBuildWorker`/`BenchmarkTool`/`BlankProgram`/`BreakpadSymbolEncoder`/`ChaosVisualDebugger`…）——**这正是旧记载「无限队列名单」的来源**：风暴根源是 `execute_run_configuration` 误选了引擎 Program 配置，不是方案级构建本身。选运行配置时只选**当前项目同名配置**（如 `Blank`）。
 4. Unreal 语义：编辑器已连接且 Live Coding 可用 → Hot Reload 编译；否则 UBT 编主 Editor target。
-5. 引擎级增量构建以**分钟**计（实测：2026-09-06 发起的引擎方案增量构建持续 Running 15 分钟+、`problems` 一直为空后仍未完成——引擎二进制越旧越久）：轮询间隔 20~30s，**不得因慢重发构建**（服务端会拒绝，但语义上属于重复发起）；**长时间构建无需阻塞等待**——记下 `sessionId`，后续随时可用 `build_solution_state`（带或不带 sessionId）恢复查询，构建在 Rider 内独立运行。
+5. **引擎级增量构建以十分钟计 + 活跃性判定（★ 2026-09-06 完整实测）**：引擎方案增量构建（426 actions，RenderCore/Renderer 等）从发起到 UBT 实际开工有 **~7 分钟排队**（20:21 发起 → 20:28 UBT 开始写日志），期间 `build_solution_state` 一直 `Running`。**关键语义：`problems` 只是错误/警告清单，不含进度——`Running + problems:[]` 不代表卡死**。构建活跃性用磁盘证据判定：
+   ```bash
+   tail -3 "Engine/Programs/UnrealBuildTool/Log.txt"          # [N/M] Compile/Link 行，N 递增 = 健康
+   ls --time-style=full-iso -l "Engine/Programs/UnrealBuildTool/Log.txt"   # mtime 持续更新 = 在干活
+   ```
+   mtime 停滞数分钟 + [N/M] 不动 → 疑似真卡死（结合 `-WaitMutex` / 排队分析），报告用户。**不得因慢重发构建**（服务端会拒绝，语义上属重复发起）；长构建无需阻塞等待，凭 `sessionId` 随时恢复查询，构建在 Rider 内独立运行。
 6. MCP 会话不能跨进程复用（`Streamable HTTP session not found`）——用 `scripts/rider_call.py` 在同进程完成握手+调用。
 
 **能力边界分层**：

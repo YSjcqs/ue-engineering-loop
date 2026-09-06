@@ -1,6 +1,6 @@
 # 六阶段状态机与 Gate 模板（WORKFLOW_STATE_MACHINE）
 
-> 本文件是 SKILL.md §2.1 的完整展开：每个阶段的 Output / 风险 / Exit Gate，以及可直接复制的 Plan、Gate、验收模板。
+> 本文件是 SKILL.md §2.3 的完整展开：每个阶段的 Output / 风险 / Exit Gate，以及可直接复制的 Plan、Gate、验收模板。
 > 核心思想：**上下文压缩或换任务后，恢复的是当前 Gate，而不是一串失去优先级的 Todo。**
 
 ---

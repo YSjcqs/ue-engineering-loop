@@ -126,7 +126,7 @@ description: UE 全栈开发工程协议：工程闭环方法论（五 Gate、�
 ### 2.5 MCP 纪律硬规则（合并实测事故）
 
 1. **先检查后使用**：会话第一步跑 `scripts/env_health_check.ps1` 并向用户汇报；**编译阶段禁止探测/断言引擎内通道**——此时 8000 无监听是正常且必然的，基于编译阶段的「引擎通道不可用/插件未装/将降级」结论一律无效（时序纪律）。
-2. **引擎在跑 ≠ 引擎内通道可用**：进程 + 插件启用 + AutoStart + 端口监听，缺一不可，逐一验证。
+2. **引擎在跑 ≠ 引擎内通道可用**：进程 + MCP 插件启用 + AutoStart + 端口监听 + **工具集插件（AllToolsets）启用**，缺一不可，逐一验证（新项目启用 MCP 后工具集默认为空，`SlateInspectorToolset` 等随 AllToolsets 提供，见 `MCP_CHANNELS.md` §6.3）。
 3. **项目路径显式传参**：严禁照抄配置里的 `IJ_MCP_SERVER_PROJECT_PATH`；以实际 `.uproject` 为准；双 mcp.json 漂移（.workbuddy/.codebuddy）要提醒用户。
 4. **调用超时 ≠ 失败**：先查进程（`engine_pid_tracker.ps1 -Action diff`）再决定是否重试，否则制造双引擎/双编译实例（实测 2 次事故）。`-WaitMutex` = UBT 互斥锁被占，等待勿重发。
 5. **RiderMCP = 编译最高优先级**（详见 §编译纪律）；不可达 → 中断请用户裁决，默认不擅自命令行。

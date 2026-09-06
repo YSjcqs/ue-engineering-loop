@@ -66,6 +66,7 @@
 | **引擎启动后一直没窗口 / agent 循环等待像无响应** | `STARTUP_STUCK_DIAGNOSIS.md` §1-2（Workbench 截图取证 → 日志 → 决策表，禁止盲等） |
 | **屏幕上有弹窗**（Missing Modules / 崩溃报告器 / Assert / 项目迁移） | `STARTUP_STUCK_DIAGNOSIS.md` §2.3 决策表（哪些 AI 可自动关、哪些必须交用户） |
 | **引擎启动即崩溃 / 进程消失** | `STARTUP_STUCK_DIAGNOSIS.md` §2.2 崩溃取证（Saved/Crashes + CrashReporter） |
+| **链接成功但找不到 SlateInspectorToolset / 工具集为空** | 新项目未启用 **AllToolsets** 插件（MCP 服务器 ≠ 工具集）→ `MCP_CHANNELS.md` §6.3 步骤 3 + §5.2 ⑥ |
 
 ---
 

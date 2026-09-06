@@ -136,6 +136,8 @@ if ($ProjectPath) {
             $uprojJson = Get-Content -Path $uproj.FullName -Raw | ConvertFrom-Json
             $mcpFound = $false
             $mcpEnabled = $false
+            $toolsetsFound = $false
+            $toolsetsEnabled = $false
             if ($uprojJson.Plugins) {
                 foreach ($pl in $uprojJson.Plugins) {
                     $pn = [string]$pl.Name
@@ -143,6 +145,13 @@ if ($ProjectPath) {
                         $mcpFound = $true
                         $Lines.Add(("  plugin entry: {0} enabled={1}" -f $pn, $pl.Enabled))
                         if ($pl.Enabled) { $mcpEnabled = $true }
+                    }
+                    # Toolsets provider: without AllToolsets the server runs but
+                    # list_toolsets is empty (no SlateInspectorToolset etc.).
+                    if ($pn -eq "AllToolsets") {
+                        $toolsetsFound = $true
+                        $Lines.Add(("  plugin entry: {0} enabled={1}" -f $pn, $pl.Enabled))
+                        if ($pl.Enabled) { $toolsetsEnabled = $true }
                     }
                 }
             }
@@ -152,6 +161,11 @@ if ($ProjectPath) {
                 $Lines.Add("  Engine MCP plugin: present but DISABLED in .uproject")
             } else {
                 $Lines.Add("  Engine MCP plugin: NOT present in .uproject (ask user whether to enable; if declined, skip in-engine tests and use desktop channel + logs)")
+            }
+            if ($mcpEnabled -and -not $toolsetsEnabled) {
+                $Lines.Add("  Toolsets plugin (AllToolsets): NOT ENABLED in .uproject (server will run but toolsets like SlateInspectorToolset are MISSING; ask user to enable AllToolsets, see MCP_CHANNELS.md 6.3)")
+            } elseif ($toolsetsEnabled) {
+                $Lines.Add("  Toolsets plugin (AllToolsets): ENABLED in .uproject")
             }
         } catch {
             $Lines.Add("  (could not parse .uproject plugin list)")

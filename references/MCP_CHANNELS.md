@@ -10,7 +10,7 @@
 | 通道 | 职责 | 默认实例 | 端点 | 依赖条件 |
 |---|---|---|---|---|
 | **IDE/构建通道** | 编译、运行配置、IDE 静态检查、调试 | RiderMCP（Rider 2025.2+ 内置 MCP Server） | `http://127.0.0.1:64482/stream` | Rider 运行 + MCP Server 已启用 |
-| **引擎内通道** | 引擎内自动化测试、编辑器操作、Python、Slate 控件树 | UnrealEngineMCP（仅 UE5.8 原生插件 `ModelContextProtocol`） | `http://127.0.0.1:8000/mcp` | ①引擎在跑 ②插件已启用 ③AutoStart 已开 ④端口监听 |
+| **引擎内通道** | 引擎内自动化测试、编辑器操作、Python、Slate 控件树 | UnrealEngineMCP（仅 UE5.8 原生插件 `ModelContextProtocol`） | `http://127.0.0.1:8000/mcp` | ①引擎在跑 ②插件已启用 ③AutoStart 已开 ④端口监听 ⑤**工具集插件（AllToolsets）已启用** |
 | **实机通道** | 截图、按键、视口交互、死锁救援 | Workbench | `http://127.0.0.1:3939/mcp` | 工作台运行中 |
 | **日志终审** | 一切结论的最终裁判 | 直接读 `<Project>/Saved/Logs/*.log` | — | 无需任何通道 |
 
@@ -57,13 +57,14 @@ python scripts/rider_call.py '{"name":"get_solution_projects","arguments":{"root
 
 ### 2.2 引擎内通道（UnrealEngineMCP）
 
-启用后引擎内运行本地 HTTP 服务器（游戏线程）：
+启用后引擎内运行本地 HTTP 服务器（游戏线程）。**注意两层结构**（2026-09 实测）：`ModelContextProtocol` 插件只提供 MCP **服务器本体**（HTTP 端点 + 基础 meta-tools）；**各功能工具集（SlateInspectorToolset / EditorAppToolset / BlueprintTools / AssetTools / AutomationTestToolset 等 52 个）由 `AllToolsets` 插件提供**——新项目只启用 MCP 插件时工具集为空，必须额外启用 AllToolsets（见 §6.3 步骤 3）。
+
 - 生成/放置 Actor、配置灯光、创建材质实例
 - **Slate 控件树操作**（SlateInspectorToolset，ref 级）→ `SLATE_AUTOMATION.md`
 - **运行自动化测试（Automation Tests）**
 - 执行 Python（`unreal` 模块 API）
 
-> 所有工具清单以实际连接后 `tools/list` 返回为准，**禁止凭文档臆测工具名**。调用约定三套并存见 `SLATE_AUTOMATION.md` §1。
+> 所有工具清单以实际连接后 `tools/list` / `list_toolsets` 返回为准，**禁止凭文档臆测工具名**。**工具集缺失的判定与处置见 §5.2 排查树⑥**。调用约定三套并存见 `SLATE_AUTOMATION.md` §1。
 
 ### 2.3 实机通道（Workbench）
 
@@ -166,7 +167,12 @@ powershell -ExecutionPolicy Bypass -File "<本技能>/scripts/env_health_check.p
   │    netstat -ano | grep 8000
   │    否 → 检查插件是否在引擎启动时报错（Saved/Logs）；确认端口未被占用/被改
   │    是 ↓
-  └─⑥ 探测可达 + 工具级握手？
+  ├─⑥ 工具集是否可用？（★ 新项目最常见的「链接成功但工具缺失」）
+  │    list_toolsets / tools/list 查找目标工具集（如 SlateInspectorToolset）
+  │    缺失 → 项目未启用 AllToolsets 插件（服务器在、工具集空，§6.3 步骤 3）
+  │         → 征询用户启用 AllToolsets 并重启编辑器，回到 ⑥
+  │    是 ↓
+  └─⑦ 探测可达 + 工具级握手？
         期望 200/405 且只读工具能返回。仍失败 → 检查防火墙 / MCP 版本兼容 / 客户端配置 URL
 ```
 
@@ -226,12 +232,15 @@ powershell -ExecutionPolicy Bypass -File "<本技能>/scripts/env_health_check.p
 ### 6.3 UE 5.8 原生 Unreal MCP 插件启用流程
 
 > 适用：项目未启用插件、用户同意启用时引导；或交用户手动操作。
+> ⚠️ **两层结构**：`ModelContextProtocol` 只提供服务器；**工具集要靠 `AllToolsets` 插件**——两者都要启用，缺一则「链接成功但找不到工具集」（新项目最常见的坑）。
 
 1. **确认引擎版本**：UE 5.8（原生 MCP 插件随 5.8 提供）；版本不符 → 告知用户，走放弃分支。
-2. **启用插件**：编辑器 `Edit > Plugins`，搜索 **Unreal MCP**，勾选启用（依赖 **Toolset Registry** 自动启用），提示重启时重启。
-3. **开启 AutoStart**：`Editor Preferences > General > Model Context Protocol` → **Auto Start Server**。
-4. **（可选）生成客户端配置**：控制台（~）执行 `ModelContextProtocol.GenerateClientConfig`。
-5. **重启编辑器**，轮询 `http://127.0.0.1:8000/mcp` 到 200/405，再做工具级握手（§4）。
+2. **启用 MCP 服务器插件**：编辑器 `Edit > Plugins`，搜索 **Unreal MCP**，勾选启用（依赖 **Toolset Registry** 自动启用），提示重启时重启。
+3. **★ 启用工具集插件 AllToolsets**：同样在 `Edit > Plugins` 搜索 **AllToolsets**，勾选启用——SlateInspectorToolset / EditorAppToolset / BlueprintTools / AssetTools / AutomationTestToolset 等 52 个工具集随它提供。**不启用则 `list_toolsets` 几乎为空**。提示重启时重启。
+4. **开启 AutoStart**：`Editor Preferences > General > Model Context Protocol` → **Auto Start Server**。
+5. **（可选）生成客户端配置**：控制台（~）执行 `ModelContextProtocol.GenerateClientConfig`。
+6. **重启编辑器**，轮询 `http://127.0.0.1:8000/mcp` 到 200/405，`list_toolsets` 确认目标工具集存在，再做工具级握手（§4）。
+7. **（可选）校验 .uproject**：`Plugins` 数组应含 `{"Name":"ModelContextProtocol","Enabled":true}` 与 `{"Name":"AllToolsets","Enabled":true}`。
 
 > ⚠️ 插件为**实验性**：仅 localhost、无鉴权、API 可能变化。
 > ⚠️ **`bAutoStartServer` 默认 false**——即使插件已启用，8000 也不会自动监听（「引擎在跑但不通」最常见原因）。持久化配置必须写：

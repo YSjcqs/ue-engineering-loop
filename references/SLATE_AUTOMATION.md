@@ -39,6 +39,7 @@ python wb_call.py desktool desktool.click '{"x":100,"y":100,"button":"left"}' ou
 1. 探活：8000 与 3939 各探一次（200/405=活着；502/000=编辑器未启动或通道未开）。
 2. 走标准闭环时序纪律：编译阶段不探测引擎内通道。
 3. 链接后做工具级握手（`Windows` 列表是常用的只读握手工具）。
+4. **★ 确认工具集存在**：`list_toolsets` / `tools/list` 查找 `SlateInspectorToolset`——**新项目仅启用 `ModelContextProtocol` 插件时工具集为空，必须额外启用 `AllToolsets` 插件并重启编辑器**（启用流程见 `MCP_CHANNELS.md` §6.3；排查树见其 §5.2 ⑥）。工具集缺失 ≠ 服务器故障，不要往防火墙/配置方向排查。
 
 ### 2.2 快照三板斧
 

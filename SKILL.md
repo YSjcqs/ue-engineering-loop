@@ -1,11 +1,14 @@
 ---
 name: ue-engineering-loop
-description: 在 UE5 C++/蓝图项目开发、编译调试、Slate 编辑器 UI 自动化、bug 修复、引擎内测试、长任务多会话推进时使用。覆盖：五 Gate 工程闭环、R8 rebuild 禁令、Slate 控件树 ref 级操作、headless Spec 验证、MCP 四通道卫生。不覆盖：纯美术资产创作、材质表达式调试、非 UE C++ 项目。
-description_en: Use for UE5 C++/Blueprint project development, build debugging, Slate editor UI automation, bug fixing, in-engine testing, and long-task multi-session workflows. Covers: 5-Gate engineering loop, R8 rebuild ban, Slate widget tree ref-level operations, headless Spec validation, MCP 4-channel hygiene. Not for: pure art asset creation, material expression debugging, non-UE C++ projects.
-version: 1.0
+description: >-
+  在 UE5 C++/蓝图项目开发、编译调试、Slate 编辑器 UI 自动化、bug 修复、引擎内测试、长任务多会话推进时使用。覆盖五 Gate 工程闭环、R8 rebuild 禁令、Slate 控件树 ref 级操作、headless Spec 验证、MCP 四通道卫生。不覆盖纯美术资产创作、材质表达式调试、非 UE C++ 项目。
+description_en: >-
+  Use for UE5 C++/Blueprint project development, build debugging, Slate editor UI automation, bug fixing, in-engine testing, and long-task multi-session workflows. Covers the 5-Gate engineering loop, the R8 rebuild ban, Slate widget tree ref-level operations, headless Spec validation, and MCP 4-channel hygiene. Not for pure art asset creation, material expression debugging, or non-UE C++ projects.
+version: "1.0"
 engine_version: "UE 5.8"
 min_rider_version: "2025.2"
 last_updated: "2026-09-06"
+---
 canonical_path: "F:/AIGC/UnrealDev/ue-engineering-loop"
 ---
 

@@ -1,31 +1,56 @@
 # ue-engineering-loop
 
-UE 全栈开发工程协议技能（WorkBuddy Skill）：工程闭环方法论 × UE 领域实测定论 × 通用 Slate 控件树自动化。
+UE 工程闭环与条件化自动化技能：工程方法论 × UE 版本化经验 × Slate/MCP 自动化配置。
 
-## 是什么
+## 两层适用范围
 
-一个可被 AI 助手加载的行为协议技能，覆盖：
+1. **通用核心**：适用于 UE4/UE5 C++/蓝图工程的需求澄清、最小实现、构建、bug 修复、分层验证和长任务交接。
+2. **自动化配置**：仅在 Windows + UE 5.8 + RiderMCP + `ModelContextProtocol`/`AllToolsets` + Workbench 条件满足时，启用 Slate ref、MCP 四通道和配套脚本。
 
-- **工程闭环**：五 Gate（读门/证据门/验证门/需求门/交接门）、六阶段状态机（M0–M5）、T0–T4 证据阶梯；
-- **编译纪律**：RiderMCP 为最高优先级，`build_solution_start` 主入口（异步 sessionId + `build_solution_state` 轮询）；**R8 红线——禁止自动 clean/rebuild/全量重编**，用户明确要求才可且一次一确认；
-- **零引擎侵入**：Slate role 注册走项目侧公开 API（`RegisterWidgetRole`/`RegisterLabelExtractor`），改引擎补丁仅作备选存档；
-- **测试闭环 R1–R8**：编译 → 启动 → 链接轮询 → 引擎内测试（headless Spec 优先）→ 实机验证 → 日志取证 → 验收勾选 → 复盘交接；
-- **启动卡死协议**：引擎遇强制交互弹窗/崩溃报告器时，Workbench 截图取证 → 日志 → 弹窗决策表，禁止盲等与重发启动；
-- **MCP 四通道卫生**：IDE 构建（RiderMCP）/ 引擎内（UnrealEngineMCP，需 `ModelContextProtocol` + `AllToolsets` 双插件）/ 实机（Workbench）/ 日志终审。
+不覆盖纯美术资产创作、材质表达式调试和非 UE 工程。用户显式约束与仓库规则始终高于技能默认流程；只读任务不写文件、不提交。
+
+## 核心能力
+
+- 五 Gate、M0–M5 状态机、T0–T4 证据阶梯及任务类型最低证据矩阵；
+- R8 红线：禁止自主 clean/rebuild/全量重编；
+- headless Spec：完整退出码、队列终止标记、并发互斥和同源 SelfTest；
+- 进程卫生：`snapshot → 精确 PID register → cleanup`，不再用时间差猜所有权；
+- MCP 调用：统一握手、协议解析、非零错误码和原子输出；
+- 启动卡死：桌面截图/窗口 + 日志取证，禁止盲等和重复启动；
+- Slate ref 级控件树操作与模态框救援。
 
 ## 目录
 
+```text
+SKILL.md            # 总纲、边界、路由和红线
+references/         # 18 篇按需加载的细则与证据登记表
+scripts/            # 6 个 Python + 3 个 PowerShell + mcp_catalog.json
+  mcp_common.py     # 三个 MCP caller 的共享严格客户端
+  validate_skill.py # frontmatter、链接、catalog、清单一致性检查
+tests/              # Python 单元测试（含 PowerShell 子进程错误码/自检契约）
 ```
-SKILL.md            # 协议总纲（每次必读的骨架与红线）
-references/         # 18 篇按需加载的细则（路由表见 SKILL.md §1）
-scripts/            # env_health_check / engine_pid_tracker / run_spec_headless
-                    # rider_call / mcp_call / wb_call / mcp_catalog.json
+
+## 运行环境矩阵
+
+| 能力 | 最低/默认环境 | 其他环境 |
+|---|---|---|
+| 通用工程闭环 | UE4/UE5；与操作系统无关 | 使用仓库已有构建/测试入口 |
+| PowerShell 脚本 | Windows PowerShell 5.1 或 PowerShell 7 | 非 Windows 只使用 core profile |
+| Python 脚本与测试 | Python 3.10+，仅标准库 | Windows/Linux/macOS 均可做离线测试 |
+| Rider 构建通道 | Rider 2025.2+；以实际 tools/list 为准 | 可改用仓库声明的 IDE/CI 入口 |
+| UE MCP/Slate 自动化 | UE 5.8 + ModelContextProtocol + AllToolsets | 版本不符先做小成本能力探测，不套用该 profile |
+| 桌面自动化 | Workbench 本地端点 | 不可用时用日志/项目原生测试降级 |
+
+## 快速质量检查
+
+```bash
+python scripts/validate_skill.py                 # Core/结构质量门
+python scripts/validate_skill.py --release       # 完整 Automation 发布门（当前历史 catalog 会 fail-closed）
+python -m unittest discover -s tests -v
 ```
 
-## 来源
+PowerShell 契约检查已纳入上述 `unittest discover`，在 Windows 上自动运行。`.github/workflows/quality.yml` 会在 push/PR 上执行同一组质量门与 PowerShell 语法检查。
 
-由三份技能融合而成（2026-09）：`UnrealDevProtocol`（具名环境实测）+ `UnrealDevProtocol-Skill`（泛化方法论）+ `ue-editor-ui-automation`（Slate 自动化），融合裁决与评审记录见仓库外 `SKILL_FUSION_PLAN.md` / `SKILL_REVIEW_REPORT.md`。
+## 来源与可追溯性
 
-## 适用
-
-UE5（多数结论实测于 UE 5.8 + Rider 2026.2）C++/蓝图项目开发、bug 修复、编译调试、引擎内测试、长任务多会话推进、Slate 编辑器 UI 自动化。不覆盖纯美术资产创作与材质表达式调试。
+本技能于 2026-09 由 `UnrealDevProtocol`、`UnrealDevProtocol-Skill` 和 `ue-editor-ui-automation` 融合。高影响 UE 结论的证据状态与跨版本复核要求见 `references/CLAIM_EVIDENCE_REGISTRY.md`；未随包附证据的历史观察不得当作跨版本定律。

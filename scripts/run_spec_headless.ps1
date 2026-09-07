@@ -1,276 +1,343 @@
 # =============================================================================
-# Run UE automation specs headless (CI-style) — RECOMMENDED default for specs.
+# Run UE automation specs headless (CI-style).
 #
-# Why headless over the MCP interactive path:
-#   - ~40s instead of minutes
-#   - the editor auto-exits  -> NO process cleanup needed
-#   - no FWaitForInteractiveFrameRate throttling (nullrhi)
-#   - no Workbench interaction (no pin/click/activate dance)
-#
-# Usage:
-#   run_spec_headless.ps1 -ProjectPath "<dir>" -Spec "<Spec.Path>"
-#   run_spec_headless.ps1 -ProjectPath "<dir>" -Spec "A+B" -EditorExe "<path>" -TimeoutSec 900
-#   run_spec_headless.ps1 -SelfTest   # verify exit code contract without engine
-#
-# Exit codes (IMPORTANT — callers MUST treat non-zero as failure):
-#   0 = all tests passed (Success > 0 and Fail == 0)
-#   1 = at least one test FAILED
-#   2 = NO TESTS EXECUTED (spec name wrong / spec not found)  <-- guards against false success
-#   3 = no log produced (editor failed to start or wrote nothing)
-#   4 = invalid arguments (project/editor not found)
-#   5 = timeout
-#
-# LESSON (reviewed 2026-09): an earlier version used $LASTEXITCODE (which
-# Start-Process does NOT set) and treated "0 success / 0 fail" as success.
-# That produced a FALSE PASS when the spec name did not exist — the single
-# most dangerous failure mode for a verification tool. Zero executed tests
-# is now a hard failure (exit 2).
-#
-# NOTE (5.8): passing an explicit -log=<path> together with -ExecCmds produces
-# NO log file. We therefore use the DEFAULT log. The old log is RENAMED (not
-# deleted) so a failed startup can never destroy the user's previous log.
+# Exit codes:
+#   0 = all discovered tests passed and queue completed
+#   1 = one or more tests failed, or editor exited non-zero
+#   2 = no tests executed
+#   3 = no current-run log produced
+#   4 = invalid arguments / project / editor
+#   5 = timeout (takes precedence over missing log or zero executed tests)
+#   6 = runner infrastructure failure (lock, launch, rotation, missing terminator)
 # =============================================================================
 param(
     [string]$ProjectPath,
     [string]$Spec,
-
-    # Optional: auto-detected from the .uproject EngineAssociation when omitted.
     [string]$EditorExe = "",
-
     [int]$TimeoutSec = 900,
-
-    # Run built-in self-tests of the exit code contract (no engine required).
-    # Verifies that each verdict path produces the correct exit code without
-    # actually launching UnrealEditor. Use after any change to this script.
-    # When set, ProjectPath/Spec are not required and the engine is not launched.
     [switch]$SelfTest
 )
 
-# ---------------------------------------------------------------------------
-# SelfTest mode: verify exit code contract without launching the engine.
-# Each case builds a fake log + fake exit code, then asserts the verdict logic
-# produces the documented exit code (0/1/2/3/5). Returns 0 if all pass.
-# ---------------------------------------------------------------------------
-if ($SelfTest) {
-    Write-Host "=== run_spec_headless.ps1 SelfTest ==="
-    $tests = @(
-        # Each: name, logContent, procExit, expectedExit
-        # Note: empty string "" behaves like $null under `-not $Log`, so the
-        # timeout case uses a non-empty placeholder ("editor running...")
-        # that has neither success nor fail markers, matching a real
-        # timeout scenario where the log exists but no test result line
-        # was written before the timeout fired.
-        @{ Name = "all pass (exit 0)"; Log = "Test Completed. Result={Success}"; Exit = 0; Want = 0 },
-        @{ Name = "one fail (exit 1)"; Log = "Test Completed. Result={Fail}"; Exit = 0; Want = 1 },
-        @{ Name = "zero tests executed (exit 2)"; Log = "Queue Empty 0 tests performed"; Exit = 0; Want = 2 },
-        @{ Name = "no log produced (exit 3)"; Log = $null; Exit = -1; Want = 3 },
-        @{ Name = "timeout (exit 5)"; Log = "editor running but no test completed"; Exit = -1; Want = 5 }
+$ErrorActionPreference = "Stop"
+
+if ($TimeoutSec -lt 10 -or $TimeoutSec -gt 86400) {
+    [Console]::Error.WriteLine("TimeoutSec must be between 10 and 86400.")
+    exit 4
+}
+
+trap {
+    [Console]::Error.WriteLine("Headless runner infrastructure failure: " + $_.Exception.Message)
+    exit 6
+}
+
+function Get-RunVerdict {
+    param(
+        [string]$LogPath,
+        [bool]$TimedOut,
+        [int]$ProcessExit
     )
+
+    if ($TimedOut) {
+        return [PSCustomObject]@{ Code = 5; Success = 0; Fail = 0; Executed = 0; QueueComplete = $false; Reason = "timeout" }
+    }
+    if ($ProcessExit -ne 0) {
+        return [PSCustomObject]@{ Code = 1; Success = 0; Fail = 0; Executed = 0; QueueComplete = $false; Reason = ("editor exited non-zero: " + $ProcessExit) }
+    }
+    if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        return [PSCustomObject]@{ Code = 3; Success = 0; Fail = 0; Executed = 0; QueueComplete = $false; Reason = "no current-run log" }
+    }
+
+    $success = (Select-String -LiteralPath $LogPath -Pattern "Result=\{Success" -ErrorAction SilentlyContinue | Measure-Object).Count
+    $fail = (Select-String -LiteralPath $LogPath -Pattern "Result=\{Fail" -ErrorAction SilentlyContinue | Measure-Object).Count
+    $executed = $success + $fail
+    $queueLine = Select-String -LiteralPath $LogPath -Pattern "Queue Empty\s+(\d+)\s+tests? performed" -AllMatches -ErrorAction SilentlyContinue | Select-Object -Last 1
+    $queueComplete = $null -ne $queueLine
+    $reportedExecuted = if ($queueComplete) { [int]$queueLine.Matches[0].Groups[1].Value } else { -1 }
+
+    if ($executed -eq 0) {
+        return [PSCustomObject]@{ Code = 2; Success = $success; Fail = $fail; Executed = $executed; QueueComplete = $queueComplete; Reason = "no tests executed" }
+    }
+    if (-not $queueComplete) {
+        return [PSCustomObject]@{ Code = 6; Success = $success; Fail = $fail; Executed = $executed; QueueComplete = $false; Reason = "missing queue completion marker" }
+    }
+    if ($reportedExecuted -ne $executed) {
+        return [PSCustomObject]@{ Code = 6; Success = $success; Fail = $fail; Executed = $executed; QueueComplete = $true; Reason = ("queue count mismatch: reported=" + $reportedExecuted + ", parsed=" + $executed) }
+    }
+    if ($fail -gt 0 -or $ProcessExit -ne 0) {
+        return [PSCustomObject]@{ Code = 1; Success = $success; Fail = $fail; Executed = $executed; QueueComplete = $true; Reason = "test or editor failure" }
+    }
+    return [PSCustomObject]@{ Code = 0; Success = $success; Fail = $fail; Executed = $executed; QueueComplete = $true; Reason = "all tests passed" }
+}
+
+function Invoke-SelfTest {
+    $cases = @(
+        @{ Name = "all pass"; Content = "Test Completed. Result={Success}`nQueue Empty 1 tests performed"; TimedOut = $false; Exit = 0; Want = 0 },
+        @{ Name = "multiple pass"; Content = "Test Completed. Result={Success}`nTest Completed. Result={Success}`nQueue Empty 2 tests performed"; TimedOut = $false; Exit = 0; Want = 0 },
+        @{ Name = "one fail"; Content = "Test Completed. Result={Success}`nTest Completed. Result={Fail}`nQueue Empty 2 tests performed"; TimedOut = $false; Exit = 0; Want = 1 },
+        @{ Name = "zero tests"; Content = "Queue Empty 0 tests performed"; TimedOut = $false; Exit = 0; Want = 2 },
+        @{ Name = "no log"; Content = $null; TimedOut = $false; Exit = 0; Want = 3 },
+        @{ Name = "editor nonzero without log"; Content = $null; TimedOut = $false; Exit = 7; Want = 1 },
+        @{ Name = "timeout without log"; Content = $null; TimedOut = $true; Exit = -1; Want = 5 },
+        @{ Name = "timeout with partial test"; Content = "Test Completed. Result={Success}"; TimedOut = $true; Exit = -1; Want = 5 },
+        @{ Name = "missing queue marker"; Content = "Test Completed. Result={Success}"; TimedOut = $false; Exit = 0; Want = 6 },
+        @{ Name = "queue count mismatch"; Content = "Test Completed. Result={Success}`nQueue Empty 9 tests performed"; TimedOut = $false; Exit = 0; Want = 6 },
+        @{ Name = "editor nonzero"; Content = "Test Completed. Result={Success}`nQueue Empty 1 tests performed"; TimedOut = $false; Exit = 1; Want = 1 }
+    )
+
+    Write-Output "=== run_spec_headless.ps1 SelfTest ==="
     $failed = 0
-    foreach ($t in $tests) {
-        # Mimic the verdict logic below
-        $success = 0; $fail = 0
-        if ($t.Log) {
-            $tmpLog = New-TemporaryFile
-            [System.IO.File]::WriteAllText($tmpLog.FullName, $t.Log)
-            $success = (Select-String -Path $tmpLog.FullName -Pattern "Result=\{Success" -ErrorAction SilentlyContinue | Measure-Object).Count
-            $fail    = (Select-String -Path $tmpLog.FullName -Pattern "Result=\{Fail"    -ErrorAction SilentlyContinue | Measure-Object).Count
-            Remove-Item $tmpLog.FullName -Force -ErrorAction SilentlyContinue
+    foreach ($case in $cases) {
+        $path = Join-Path ([System.IO.Path]::GetTempPath()) ("ue_loop_verdict_" + [Guid]::NewGuid().ToString("N") + ".log")
+        try {
+            if ($null -ne $case.Content) { [System.IO.File]::WriteAllText($path, [string]$case.Content) }
+            $result = Get-RunVerdict -LogPath $path -TimedOut $case.TimedOut -ProcessExit $case.Exit
+            $status = if ($result.Code -eq $case.Want) { "PASS" } else { "FAIL" }
+            if ($status -eq "FAIL") { $failed++ }
+            Write-Output ("[{0}] {1}: got={2}, want={3}" -f $status, $case.Name, $result.Code, $case.Want)
+        } finally {
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
         }
-        $executed = $success + $fail
-        $code = -1
-        if (-not $t.Log) { $code = 3 }
-        elseif ($executed -eq 0 -and $t.Name -like "*zero*") { $code = 2 }
-        elseif ($t.Name -like "*timeout*") { $code = 5 }
-        elseif ($fail -gt 0 -or $t.Exit -ne 0) { $code = 1 }
-        else { $code = 0 }
-
-        # Adjust for the "no log" case specifically (verdict block checks Test-Path $log)
-        if (-not $t.Log) {
-            $code = 3  # "no log produced"
-        } elseif ($t.Name -like "*zero*" -and $executed -eq 0) {
-            $code = 2
-        }
-
-        $status = if ($code -eq $t.Want) { "PASS" } else { "FAIL" }
-        if ($code -ne $t.Want) { $failed++ }
-        Write-Host ("  [{0}] {1}  got={2} want={3}" -f $status, $t.Name, $code, $t.Want)
     }
-    Write-Host ""
-    if ($failed -gt 0) {
-        Write-Host "SelfTest: $failed test(s) FAILED."
-        exit 1
-    }
-    Write-Host "SelfTest: all $($tests.Count) tests passed."
-    exit 0
+    if ($failed -gt 0) { [Console]::Error.WriteLine("SelfTest failed: " + $failed); return 1 }
+    Write-Output ("SelfTest passed: " + $cases.Count + " cases")
+    return 0
 }
 
-# ---------------------------------------------------------------------------
-# Validate mandatory params (not declared Mandatory above so -SelfTest works
-# without them). From here on, ProjectPath and Spec are required.
-# ---------------------------------------------------------------------------
-if (-not $ProjectPath) {
-    Write-Host "ERROR: -ProjectPath is required (or use -SelfTest)."
-    exit 4
-}
-if (-not $Spec) {
-    Write-Host "ERROR: -Spec is required (or use -SelfTest)."
+if ($SelfTest) { exit (Invoke-SelfTest) }
+
+if ([string]::IsNullOrWhiteSpace($ProjectPath)) { [Console]::Error.WriteLine("-ProjectPath is required."); exit 4 }
+if ([string]::IsNullOrWhiteSpace($Spec)) { [Console]::Error.WriteLine("-Spec is required."); exit 4 }
+if ($Spec -notmatch "^[A-Za-z0-9_.+*? -]+$") {
+    [Console]::Error.WriteLine("-Spec contains unsupported characters. Quotes, semicolons, and line breaks are forbidden.")
     exit 4
 }
 
-# ---------------------------------------------------------------------------
-# Resolve project + uproject
-# ---------------------------------------------------------------------------
-if (-not (Test-Path $ProjectPath)) {
-    Write-Host "ERROR: project path not found: $ProjectPath"
+try {
+    $resolvedProject = (Resolve-Path -LiteralPath $ProjectPath -ErrorAction Stop).Path
+} catch {
+    [Console]::Error.WriteLine("Project path not found: " + $ProjectPath)
     exit 4
 }
-$uprojectFile = Get-ChildItem -Path $ProjectPath -Filter "*.uproject" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $uprojectFile) {
-    Write-Host "ERROR: no .uproject found under: $ProjectPath"
+try {
+    $uprojectFiles = @(Get-ChildItem -LiteralPath $resolvedProject -Filter "*.uproject" -File -ErrorAction Stop)
+} catch {
+    [Console]::Error.WriteLine("Could not enumerate .uproject files: " + $_.Exception.Message)
     exit 4
 }
+if ($uprojectFiles.Count -ne 1) {
+    [Console]::Error.WriteLine("Expected exactly one .uproject directly under " + $resolvedProject + "; found " + $uprojectFiles.Count)
+    exit 4
+}
+$uprojectFile = $uprojectFiles[0]
 $projName = [System.IO.Path]::GetFileNameWithoutExtension($uprojectFile.Name)
-$logDir   = Join-Path $ProjectPath "Saved/Logs"
-$log      = Join-Path $logDir "$projName.log"
+$runId = [Guid]::NewGuid().ToString("N")
+$logDir = Join-Path $resolvedProject "Saved\Logs\Automation"
+$log = Join-Path $logDir ($projName + "-" + $runId + ".log")
 
-# ---------------------------------------------------------------------------
-# Resolve editor executable (no hardcoded default path)
-# ---------------------------------------------------------------------------
 function Resolve-EditorExe {
     param([string]$Hint, [string]$UprojectPath)
-
     if ($Hint) {
-        if (Test-Path $Hint) { return $Hint }
-        Write-Host "WARN: -EditorExe path does not exist: $Hint"
+        if (Test-Path -LiteralPath $Hint -PathType Leaf) { return (Resolve-Path -LiteralPath $Hint).Path }
+        return $null
     }
-
-    # Try the EngineAssociation -> installed build registry lookup.
     try {
-        $json = Get-Content -Path $UprojectPath -Raw | ConvertFrom-Json
-        $assoc = $json.EngineAssociation
+        $json = Get-Content -LiteralPath $UprojectPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $assoc = [string]$json.EngineAssociation
+        if ($assoc -and (Test-Path -LiteralPath $assoc -PathType Container)) {
+            $candidate = Join-Path $assoc "Engine\Binaries\Win64\UnrealEditor.exe"
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
+        }
         if ($assoc) {
-            # Source builds may already be a path.
-            if (Test-Path $assoc) {
-                $cand = Join-Path $assoc "Engine/Binaries/Win64/UnrealEditor.exe"
-                if (Test-Path $cand) { return $cand }
-            }
             $regKey = "HKCU:\SOFTWARE\Epic Games\Unreal Engine\Builds"
             if (Test-Path $regKey) {
-                $item = Get-ItemProperty -Path $regKey -ErrorAction SilentlyContinue
-                $prop = $item.PSObject.Properties | Where-Object { $_.Name -eq $assoc } | Select-Object -First 1
-                if ($prop -and $prop.Value) {
-                    $cand = Join-Path $prop.Value "Engine/Binaries/Win64/UnrealEditor.exe"
-                    if (Test-Path $cand) { return $cand }
+                $item = Get-ItemProperty -Path $regKey -ErrorAction Stop
+                $property = $item.PSObject.Properties | Where-Object { $_.Name -eq $assoc } | Select-Object -First 1
+                if ($property -and $property.Value) {
+                    $candidate = Join-Path ([string]$property.Value) "Engine\Binaries\Win64\UnrealEditor.exe"
+                    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
                 }
             }
         }
     } catch { }
-
     return $null
 }
 
 $editor = Resolve-EditorExe -Hint $EditorExe -UprojectPath $uprojectFile.FullName
-if (-not $editor) {
-    Write-Host "ERROR: could not locate UnrealEditor.exe."
-    Write-Host "       Pass it explicitly:  -EditorExe <path-to-UnrealEditor.exe>"
-    exit 4
+if (-not $editor) { [Console]::Error.WriteLine("Could not locate UnrealEditor.exe; pass -EditorExe explicitly."); exit 4 }
+
+function Get-ExistingEditors {
+    try {
+        return @(Get-CimInstance Win32_Process -Filter "Name LIKE 'UnrealEditor%.exe'" -ErrorAction Stop | ForEach-Object { [int]$_.ProcessId })
+    } catch {
+        return @(-1)
+    }
 }
 
-# ---------------------------------------------------------------------------
-# Rotate (NOT delete) the default log so parsing sees only this run
-# ---------------------------------------------------------------------------
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-if (Test-Path $log) {
-    # Rotate with a timestamp so consecutive runs don't overwrite the previous
-    # backup (a plain .prev would be destroyed by the second run).
-    $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-    Move-Item -Path $log -Destination ($log + ".prev_" + $stamp) -Force -ErrorAction SilentlyContinue
-    # Keep only the 5 most recent backups.
-    Get-ChildItem -Path $logDir -Filter "$projName.log.prev_*" -File -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -Skip 5 |
-        ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+$sha = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($resolvedProject.ToLowerInvariant())
+    $hash = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant().Substring(0, 16)
+} finally {
+    $sha.Dispose()
 }
+$mutexName = "Local\ue-engineering-loop-headless-" + $hash
+$createdNew = $false
+$mutex = [System.Threading.Mutex]::new($false, $mutexName, [ref]$createdNew)
+$lockHeld = $false
+$leaseStream = $null
+$proc = $null
+try {
+    try {
+        $lockHeld = $mutex.WaitOne(0, $false)
+    } catch [System.Threading.AbandonedMutexException] {
+        $lockHeld = $true
+    }
+    if (-not $lockHeld) { [Console]::Error.WriteLine("Another headless run is active for this project."); exit 6 }
 
-Write-Host "=========================================="
-Write-Host " Spec    : $Spec"
-Write-Host " Project : $($uprojectFile.FullName)"
-Write-Host " Editor  : $editor"
-Write-Host " Log     : $log"
-Write-Host "=========================================="
+    $leaseDir = Join-Path $resolvedProject "Saved\Locks"
+    New-Item -ItemType Directory -Path $leaseDir -Force | Out-Null
+    $leasePath = Join-Path $leaseDir "ue-engineering-loop-headless.lock"
+    try {
+        $leaseStream = [System.IO.File]::Open($leasePath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $leaseStream.SetLength(0)
+        $leaseBytes = [System.Text.Encoding]::UTF8.GetBytes(("pid=" + $PID + ";started=" + (Get-Date).ToUniversalTime().ToString("o")))
+        $leaseStream.Write($leaseBytes, 0, $leaseBytes.Length)
+        $leaseStream.Flush()
+    } catch {
+        [Console]::Error.WriteLine("Could not acquire project lease: " + $_.Exception.Message)
+        exit 6
+    }
 
-$argList = "`"$($uprojectFile.FullName)`" -ExecCmds=`"Automation RunTests $Spec;Quit`" -unattended -nosplash -nullrhi -nopause -stdout -FullStdOutLogOutput"
+    $existing = @(Get-ExistingEditors)
+    if ($existing.Count -gt 0) {
+        [Console]::Error.WriteLine("Existing or uninspectable UnrealEditor process detected (PID: " + ($existing -join ",") + "). Headless runner requires an exclusive machine-level Editor lease.")
+        exit 6
+    }
 
-$proc = Start-Process -FilePath $editor -ArgumentList $argList -WindowStyle Minimized -PassThru
-Write-Host ("Started editor PID " + $proc.Id)
+    try {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    } catch {
+        [Console]::Error.WriteLine("Could not create log directory: " + $_.Exception.Message)
+        exit 6
+    }
+    if (Test-Path -LiteralPath $log) {
+        [Console]::Error.WriteLine("Unique run log already exists; refusing ambiguous evidence: " + $log)
+        exit 6
+    }
 
-$elapsed   = 0
-$timedOut  = $false
-while ($elapsed -lt $TimeoutSec) {
-    Start-Sleep -Seconds 5
-    $elapsed += 5
-    if ($proc.HasExited) { break }
-    if ((Test-Path $log) -and ((Get-Item $log).Length -gt 0)) {
-        $done = Select-String -Path $log -Pattern "Queue Empty|Test Completed\. Result=" -ErrorAction SilentlyContinue
-        if ($done) {
-            Start-Sleep -Seconds 3   # let the Quit command land
+    Write-Output "=========================================="
+    Write-Output ("Spec    : " + $Spec)
+    Write-Output ("Project : " + $uprojectFile.FullName)
+    Write-Output ("Editor  : " + $editor)
+    Write-Output ("Log     : " + $log)
+    Write-Output "=========================================="
+
+    $argList = @(
+        ('"' + $uprojectFile.FullName + '"'),
+        ('-ExecCmds="Automation RunTests ' + $Spec + ';Quit"'),
+        ('-abslog="' + $log + '"'),
+        ("-UEEngineeringRunId=" + $runId),
+        "-unattended", "-nosplash", "-nullrhi", "-nopause", "-stdout", "-FullStdOutLogOutput"
+    )
+    try {
+        $proc = Start-Process -FilePath $editor -ArgumentList $argList -WindowStyle Minimized -PassThru -ErrorAction Stop
+    } catch {
+        [Console]::Error.WriteLine("Failed to start UnrealEditor: " + $_.Exception.Message)
+        exit 6
+    }
+    Write-Output ("Started editor PID " + $proc.Id)
+
+    $elapsed = 0
+    $timedOut = $false
+    $queueObserved = $false
+    $runnerFailureReason = ""
+    while ($elapsed -lt $TimeoutSec) {
+        Start-Sleep -Seconds 5
+        $elapsed += 5
+        $proc.Refresh()
+        if ($proc.HasExited) { break }
+        $otherEditors = @(Get-ExistingEditors | Where-Object { $_ -ne $proc.Id })
+        if ($otherEditors.Count -gt 0) {
+            $runnerFailureReason = "another or uninspectable UnrealEditor appeared during this run; machine-level Editor exclusivity was lost"
             break
         }
+        if (-not $queueObserved -and (Test-Path -LiteralPath $log -PathType Leaf)) {
+            $queueObserved = $null -ne (Select-String -LiteralPath $log -Pattern "Queue Empty\s+\d+\s+tests? performed" -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($queueObserved) { Write-Output ("[" + $elapsed + "s] queue completed; waiting for editor exit...") }
+        }
+        if ($elapsed % 30 -eq 0 -and -not $queueObserved) { Write-Output ("[" + $elapsed + "s] tests running...") }
     }
-    if ($elapsed % 30 -eq 0) { Write-Host "[$elapsed s] running..." }
-}
 
-if (-not $proc.HasExited) {
-    $timedOut = $true
-    Write-Host "TIMEOUT: stopping editor."
-    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-}
+    $proc.Refresh()
+    if (-not $proc.HasExited -and $runnerFailureReason) {
+        Write-Warning ($runnerFailureReason + "; stopping only the original process handle.")
+        try { $proc.Kill(); $null = $proc.WaitForExit(10000) } catch { }
+    } elseif (-not $proc.HasExited) {
+        $timedOut = $true
+        Write-Warning ("Timeout after " + $TimeoutSec + " seconds; stopping only the original editor process handle.")
+        try { $proc.Kill(); $null = $proc.WaitForExit(10000) } catch { }
+    }
+    $proc.Refresh()
+    $procExit = if ($proc.HasExited) { $proc.ExitCode } else { -1 }
+    $finalOtherEditors = @(Get-ExistingEditors | Where-Object { $_ -ne $proc.Id })
+    if (-not $runnerFailureReason -and $finalOtherEditors.Count -gt 0) {
+        $runnerFailureReason = "another or uninspectable UnrealEditor exists after this run; evidence ownership is ambiguous"
+    }
 
-$procExit = if ($proc.HasExited) { $proc.ExitCode } else { -1 }
+    Write-Output ""
+    Write-Output "=== RESULTS ==="
+    if (Test-Path -LiteralPath $log -PathType Leaf) {
+        Get-Content -LiteralPath $log |
+            Select-String "Test Completed\. Result=|Queue Empty|Found \d+ automation|Expected|Automation Test (Succeeded|Failed)" |
+            ForEach-Object { Write-Output $_.Line }
+    } else {
+        Write-Output "no current-run log produced"
+    }
 
-Write-Host ""
-Write-Host "=== RESULTS ==="
-if (Test-Path $log) {
-    Get-Content $log |
-        Select-String "Test Completed\. Result=|Queue Empty|Found \d+ automation|Expected|Automation Test (Succeeded|Failed)" |
-        ForEach-Object { Write-Host $_.Line }
-} else {
-    Write-Host "no log produced"
+    if ($runnerFailureReason) {
+        $verdict = [PSCustomObject]@{ Code = 6; Success = 0; Fail = 0; Executed = 0; QueueComplete = $false; Reason = $runnerFailureReason }
+    } else {
+        $verdict = Get-RunVerdict -LogPath $log -TimedOut $timedOut -ProcessExit $procExit
+    }
+    Write-Output ""
+    Write-Output "=== SUMMARY ==="
+    Write-Output ("Executed: {0} Success: {1} Fail: {2} QueueComplete: {3} EditorExit: {4}" -f $verdict.Executed, $verdict.Success, $verdict.Fail, $verdict.QueueComplete, $procExit)
+    if ($verdict.Code -eq 0) { Write-Output "VERDICT: PASS (exit 0)" }
+    else { [Console]::Error.WriteLine("VERDICT: FAIL (exit " + $verdict.Code + ") - " + $verdict.Reason) }
+    exit $verdict.Code
+} finally {
+    if ($null -ne $proc) {
+        try {
+            $proc.Refresh()
+            if (-not $proc.HasExited) {
+                [Console]::Error.WriteLine("Runner cleanup: launched editor is still active; closing the original process handle before releasing the lease.")
+                $closed = $false
+                if ($proc.MainWindowHandle -ne 0) {
+                    $closed = $proc.CloseMainWindow()
+                    if ($closed) { $closed = $proc.WaitForExit(10000) }
+                }
+                if (-not $closed) {
+                    $proc.Kill()
+                    $closed = $proc.WaitForExit(10000)
+                }
+                if (-not $closed) { [Console]::Error.WriteLine("Runner cleanup failed; residual PID: " + $proc.Id) }
+            }
+        } catch {
+            [Console]::Error.WriteLine("Runner cleanup failed; residual PID may remain: " + $proc.Id + " (" + $_.Exception.Message + ")")
+        }
+    }
+    if ($null -ne $leaseStream) {
+        try {
+            $leaseStream.Seek(0, [System.IO.SeekOrigin]::Begin) | Out-Null
+            $leaseStream.SetLength(0)
+            $inactive = [System.Text.Encoding]::UTF8.GetBytes(("inactive=" + (Get-Date).ToUniversalTime().ToString("o")))
+            $leaseStream.Write($inactive, 0, $inactive.Length)
+            $leaseStream.Flush()
+        } catch { }
+        $leaseStream.Dispose()
+    }
+    if ($lockHeld) {
+        try { $mutex.ReleaseMutex() } catch { }
+    }
+    $mutex.Dispose()
 }
-
-# ---------------------------------------------------------------------------
-# Verdict — zero executed tests is a FAILURE, never a pass
-# ---------------------------------------------------------------------------
-$success = 0
-$fail    = 0
-if (Test-Path $log) {
-    $success = (Select-String -Path $log -Pattern "Result=\{Success" -ErrorAction SilentlyContinue | Measure-Object).Count
-    $fail    = (Select-String -Path $log -Pattern "Result=\{Fail"    -ErrorAction SilentlyContinue | Measure-Object).Count
-}
-
-Write-Host ""
-Write-Host "=== SUMMARY ==="
-Write-Host ("Executed: {0}    Success: {1}    Fail: {2}    EditorExit: {3}" -f ($success + $fail), $success, $fail, $procExit)
-
-if (-not (Test-Path $log)) {
-    Write-Host "VERDICT: FAIL (exit 3) — no log produced; editor may have failed to start."
-    exit 3
-}
-if (($success + $fail) -eq 0) {
-    Write-Host "VERDICT: FAIL (exit 2) — NO TESTS EXECUTED."
-    Write-Host "         Check the spec name ($Spec). A typo here must never look like a pass."
-    exit 2
-}
-if ($timedOut) {
-    Write-Host "VERDICT: FAIL (exit 5) — timed out."
-    exit 5
-}
-if ($fail -gt 0 -or $procExit -ne 0) {
-    Write-Host "VERDICT: FAIL (exit 1) — $fail test(s) failed; editor exit $procExit."
-    exit 1
-}
-
-Write-Host "VERDICT: PASS (exit 0)"
-exit 0

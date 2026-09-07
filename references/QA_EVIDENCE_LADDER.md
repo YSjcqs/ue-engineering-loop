@@ -18,6 +18,20 @@
 **Interactive QA 适合证明**：UI 操作、搜索选择拖拽、弹窗、Save/Reopen、布局、空状态、焦点、原生手感。
 **失败动作**：停止扩大范围，修复当前层后重跑；失败退回**对应层**的 owning seam，不全项目盲查。
 
+### 1.1 任务类型 → 最低证据等级
+
+| 任务类型 | 最低层 | 必做 | 可标 N/A |
+|---|---|---|---|
+| 只读评审 / 文档分析 | T0 | 文件与行号、矛盾检查、结论边界 | 编译、引擎、实机、写入交接文件 |
+| 纯文档 / 注释改动 | T0 | diff、链接/格式校验 | 编译与引擎测试，需说明无运行时影响 |
+| 构建脚本 / 配置 | T1 | 语法、失败路径、自检或最小沙箱验证 | T3，仅当无用户可见行为 |
+| 纯算法或序列化逻辑 | T1 + 相关 target 编译 | focused Spec、失败注入、源码后新证据 | T3，若无 UI/资产行为 |
+| UE 模块集成 | T2 | 相关 Editor/Game target + focused/full Automation | T3/T4 仅在需求不涉及可见或部署行为时 |
+| 编辑器 UI / 资产保存 | T3 | T2 + 可见操作 + Save/Reopen + 日志 | T4，若不涉及 Cook/部署/多进程 |
+| Cook/包体/联机/性能 | T4 | 真实环境、版本与配置、长稳/故障证据 | 无；这是终点 |
+
+> 不适用项必须写 `N/A + 理由`。不得为了形式启动无关引擎，也不得用 N/A 掩盖验收标准明确要求的高层证据。
+
 ---
 
 ## 2. UE 测试闭环细则（SKILL.md §2.4 展开）
@@ -25,12 +39,12 @@
 ### ① 编译
 
 ```
-1. 通过 IDE/构建通道编译——主入口 build_solution_start（SKILL.md §3.1）；贴出真实输出
+1. Core Profile 使用仓库声明的构建入口；Automation Profile 优先 `build_solution_start`（SKILL.md §3.1）。两者都必须贴真实输出并确认实际 target。
 2. 失败 → 提取错误行（文件:行号），先用 IDE 静态检查（get_file_problems）定位，修复后重编
    （禁止反复试错编译，每次失败先分析根因）
 3. Game target 编译规则见 UE_BUILD_PITFALLS.md §4.2
 4. 编译卡住/超时 → 先查进程再判（超时 ≠ 失败）；能力边界外明确告知用户根因+动作
-5. ★ 时序纪律：编译阶段禁止探测引擎内通道状态（此时无监听是正常且必然的）
+5. ★ 时序纪律：编译阶段禁止用引擎通道探测裁决新产物状态（可能无监听，也可能命中旧实例）
 6. ★ R8：禁止自主 clean/rebuild/全量重编（UE_BUILD_PITFALLS.md §1.6）
 ```
 
@@ -53,7 +67,7 @@
 ```
 A. headless 跑 Spec（首选，~40s，自动退出，无需清理）：
    scripts/run_spec_headless.ps1 -ProjectPath "<项目>" -Spec "<Spec.Path>"
-   ★ 必须看退出码：0=通过；1=有失败；2=零测试执行(按失败)；3=无日志；5=超时
+   ★ 必须看完整退出码：0=通过；1=测试/编辑器失败；2=零测试；3=无本轮日志；4=参数错误；5=超时；6=runner 基础设施失败
    ★ 局限：-nullrhi 无渲染 → 截图/视觉验证/Python 交互不可用（见 AUTOMATION_TESTING.md §1.4）
 B. 引擎内通道跑 Automation / PIE（需常驻引擎）
 C. Python 执行（unreal 模块）——先查能力边界（AUTOMATION_TESTING.md §4）
@@ -182,14 +196,14 @@ D. 需要程序化改蓝图 → 下沉 editor-only C++ 测试辅助库（AUTOMAT
 | 自动化测试没有现成的 | 补写最小测试（Automation 或 Python），记录到任务卡 |
 | PIE 无法启动 | 检查是否有未保存关卡/编译版本；退回引擎内通道的编辑器操作 |
 | 日志没找到 | 检查项目路径（Saved 在项目根下）；确认引擎确实运行过该项目的进程 |
-| 时间超时 | UE 编译/启动本就慢：编译给 5-10 分钟，引擎启动 1-3 分钟，轮询 50s 不够可继续 |
+| 时间超时 | 首个 10×5s 窗口结束后必须转进程/窗口/日志取证；只有出现新的进展证据时才允许开启下一段有限轮询，禁止无证据续等 |
 | **Spec 卡在 `FWaitForInteractiveFrameRate`（3 fps，要 ≥10）** | **改用 headless**（治本）；或实机通道 pin 置顶 + **物理点击窗口中心**激活（仅置顶无效；`t.idlewhennotfocused 0` 实测无效） |
 | MCP 调用超时/返回 `-32001` | **先查进程**：可能已启动成功。确认未启动才重试——否则造成双引擎实例（SKILL.md 硬规则 4） |
 | 编译报「X 不是成员」「函数不接受 N 个参数」 | **先查 include 缺失**（UHT 不做类型检查，UHT 通过 ≠ 编译通过）。全盘搜类型名/枚举名确认定义与引入 |
 | 引擎启动崩溃：`Code not found for generated code (package /Script/X)` | 静态对象在 **DllMain** 期做了堆分配/调用引擎 API/跨 TU 静态访问 → 改 POD 链表 + 延迟 flush（`UE_RUNTIME_GOTCHAS.md` §1） |
 | InstancedStruct 序列化崩溃 | 裸 `FMemoryWriter/Reader` 无 name map → 用 **`FObjectWriter`/`FObjectReader`**；且 `Defaults` 必须传真实默认实例（`UE_RUNTIME_GOTCHAS.md` §2） |
-| 接口 BlueprintNativeEvent 覆写不生效 | 5.8 下 C++ override `_Implementation` 会被静态 thunk 绕过；且**禁止虚表直调**（必须 `Execute_*`）。BP 是唯一完整实现路径（`UE_RUNTIME_GOTCHAS.md` §3） |
-| 双击资产无反应 | `OpenAssets` 返回 `Unhandled` = 静默无操作（**不是 fallback**）→ 必须 `FSimpleAssetEditor::CreateEditor` + 返回 `Handled`（`UE_RUNTIME_GOTCHAS.md` §6） |
-| 残留引擎进程 / 屏幕残留置顶红框 | PID 跟踪 `cleanup` + `window_release`（`PROCESS_HYGIENE.md`） |
+| 接口 BlueprintNativeEvent 覆写不生效 | 始终用 `Execute_*`；对 native/BP/default 三组做目标版本最小复现，再按 `INTERFACE-BNE-01` 裁决（`UE_RUNTIME_GOTCHAS.md` §3） |
+| 双击资产无反应 | 在目标版本复核 `OpenAssets` 返回链；登记案例用 `FSimpleAssetEditor::CreateEditor` + `Handled`（`ASSET-OPEN-01`） |
+| 残留引擎进程 / 屏幕残留置顶红框 | 仅 cleanup 精确 register 的 PID + `window_release`（`PROCESS_HYGIENE.md`） |
 | Slate 控件在快照里隐形 / graph 上无法操作 pin | 项目侧 role 注册（`SLATE_AUTOMATION.md` §3）+ ref 操作（`PITFALLS_SLATE_UI.md` §2） |
-| 引擎内 MCP 全部超时 | 模态框死锁 → desktool 救援四步（`PITFALLS_SLATE_UI.md` §3） |
+| 引擎内 MCP 全部超时 | 模态框是高优先级候选，不是唯一根因；先截图/窗口/进程/日志确认，再决定是否执行 Escape（`PITFALLS_SLATE_UI.md` §3） |

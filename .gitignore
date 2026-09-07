@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+.pytest_cache/
+.coverage
+*.tmp
+scripts/mcp_catalog.json.lock
+.engine_baseline_*.json
+.engine_ai_owned_*.json

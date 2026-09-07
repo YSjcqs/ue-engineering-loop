@@ -1,9 +1,8 @@
 # UE 运行时实测定论（静态注册 / 序列化 / 接口 / 多态）
 
-> 沉淀自 2026-08 ~ 2026-09 UE 5.8 插件开发实战。
-> **本文件的每条结论都经过「读引擎源码 + 编译/运行实测」双重验证**，不是文档推测。
-> 用途：开工前先查这里，避免踩同一个坑两次。
-> **版本适用性**：结论出自 UE 5.8 实测；核心机制（DllMain/序列化/BNE）跨 5.x 通常成立，跨大版本或 minor 版本使用前，先按 QA 证据阶梯用最小 Spec 验证。
+> 沉淀自 2026-08 ~ 2026-09 UE 5.8 插件开发观察。
+> 用途：作为高价值诊断线索，避免重复探索；不得把历史观察直接当成跨版本定律。
+> **证据与版本边界**：高影响结论统一登记在 `CLAIM_EVIDENCE_REGISTRY.md`。原始源码行号、最小复现或日志未随包提供的条目标为 `Environment-observed`，应用到不同 minor、自研分支或不同插件版本前，先按 QA 证据阶梯做最小 Spec。
 
 ---
 
@@ -72,8 +71,7 @@ void UMySubsystem::Initialize(...) {
 
 ### 2.1 裸 Memory 归档没有 name map
 
-`FMemoryWriter` / `FMemoryReader` **不含 name/object 引用表**。
-`FInstancedStruct` / `TInstancedStruct` / 任何按 `FName` 解析的类型引用在反序列化时会**崩溃**（非报错）。
+在登记的 UE 5.8 案例中，`FMemoryWriter` / `FMemoryReader` 未提供该场景所需的 name/object 引用语义；对含类型/FName 引用的 InstancedStruct 使用裸 Memory archive 曾触发反序列化崩溃。按 `SERIALIZE-INSTANCED-01` 复核后再推广到其他类型和版本。
 
 **正确工具**：
 
@@ -90,7 +88,7 @@ TArray<uint8> Bytes;
 
 ### 2.2 `Defaults` 参数必须传真实默认实例
 
-传 `nullptr` 时，含 `FText`（尤其 editor-only 字段）的结构在**写入**阶段就崩溃。
+登记的 UE 5.8 案例中，向该序列化链传 `nullptr` 且结构含 `FText` 时在写入阶段崩溃；其他结构/archive 组合先按 `SERIALIZE-DEFAULTS-01` 做正负对照，不作无条件断言。
 
 ```cpp
 const FMyStruct Defaults;                       // 真实默认构造实例
@@ -99,9 +97,9 @@ Struct->SerializeItem(Archive, &Value, &Defaults);  // 而非 nullptr
 
 ### 2.3 InstancedStruct 的 traits 与已知问题
 
-- traits **全开**：`WithSerializer` / `Identical` / `ExportTextItem` / `ImportTextItem`（`InstancedStruct.h` 中已声明）→ 序列化与文本往返**原生支持**。
-- `TInstancedStruct<T>` 与 `FInstancedStruct` 同尺寸，反射层直接互操作。
-- **已知问题**：**ini/config 序列化**损坏（社区确认）。SavePackage 二进制与 `ExportText`/`ImportText` 是另一条链路，**不受影响**。
+- 登记环境中 `InstancedStruct.h` 声明了 `WithSerializer` / `Identical` / `ExportTextItem` / `ImportTextItem`；实际类型与分支仍应查当前源码。
+- 登记环境观察到 `TInstancedStruct<T>` 与 `FInstancedStruct` 的反射互操作可用；跨版本先验证布局与 traits。
+- ini/config 序列化曾出现损坏报告；SavePackage 与文本往返是不同链路，但不能据此推断“必然不受影响”。按 `SERIALIZE-INSTANCED-01` 分别验证。
 
 ### 2.4 文本往返（复制粘贴语义）
 
@@ -125,7 +123,7 @@ I->GetThing();      // ❌ check-fail: "Do not directly call Event functions in 
 IMyInterface::Execute_GetThing(Obj);   // ✅ 走生成的 static thunk
 ```
 
-### 3.2 禁止 C++ override `_Implementation`（架构性失效）
+### 3.2 C++ override `_Implementation` 的版本化路由风险
 
 **UHT 生成的 `Execute_*` 调用链**：
 ```
@@ -135,7 +133,7 @@ Execute_GetAvatar(Obj)
       → 静态绑定【接口自身】的 GetAvatar_Implementation 默认体
 ```
 
-**结果**：C++ 子类 override `GetAvatar_Implementation()` **能编译，但运行期被绕过**——调用的是接口默认体。
+**登记案例结果**：特定 UE 5.8 接口声明中，C++ 子类 override `GetAvatar_Implementation()` 能编译，但测试观察到运行期走接口默认体。该现象受 UHT 生成形式和引擎分支影响，采用前按 `INTERFACE-BNE-01` 重建三组对照。
 
 > **测试陷阱**：若子类的三个方法返回值恰好与默认体相同（nullptr/空容器），测试会「假通过」，只有真正返回非默认值的方法才会暴露问题。
 
@@ -143,8 +141,8 @@ Execute_GetAvatar(Obj)
 
 | 实现方 | 支持度 |
 |---|---|
-| **Blueprint 实现接口 + 覆写函数图** | ✅ **唯一完整实现路径**（实测通过） |
-| C++ 类实现接口 | ❌ 不可用（见 3.2） |
+| **Blueprint 实现接口 + 覆写函数图** | ✅ 登记案例通过 |
+| C++ 类实现接口 | ⚠️ 先用 `Execute_*` + native/BP 对照 Spec 验证；不得仅凭本案例判定全局不可用 |
 
 **替代方案**（需要 native 实现时）：
 1. 用小 BP 子类包一层，BP 图里调用 C++ 函数；
@@ -192,7 +190,7 @@ Execute_GetAvatar(Obj)
 
 ## 6. 资产打开（双击无响应的经典坑）
 
-**阶段文档常说**「返回 Unhandled 让引擎 fallback 到默认编辑器」——**这是错的**。
+**登记案例中的阶段文档曾假设**「返回 Unhandled 会 fallback 到默认编辑器」；UE 5.8 目标分支的源码链与运行观察不支持该假设。跨版本按 `ASSET-OPEN-01` 复核。
 
 **实际链路**：
 ```

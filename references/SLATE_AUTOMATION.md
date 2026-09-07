@@ -26,7 +26,7 @@
 **脚本**（本技能 `scripts/`，mcp_call.py 依赖同目录 `mcp_catalog.json`）：
 
 ```bash
-python mcp_call.py SlateInspectorToolset Snapshot '{"ref":"w1","maxDepth":40}' out.txt
+python mcp_call.py SlateInspectorToolset.SlateInspectorToolset Snapshot '{"ref":"w1","maxDepth":40}' out.txt
 python wb_call.py desktool desktool.click '{"x":100,"y":100,"button":"left"}' out.txt
 ```
 
@@ -124,10 +124,10 @@ canvas [ref=cv1] → node [ref=n1] → pin [ref=p1]（exec-out）
 ### 4.3 ref 级连线与验证
 
 ```bash
-python mcp_call.py SlateInspectorToolset Drag '{"startRef":"p1","endRef":"p2"}' r.txt   # 返回 true
+python mcp_call.py SlateInspectorToolset.SlateInspectorToolset Drag '{"startRef":"p1","endRef":"p2"}' r.txt   # 返回 true
 # 只读验证（资产对象路径必须完整 /Game/X.X）：
-python mcp_call.py BlueprintTools find_nodes '{"graph":{"refPath":"/Game/X.X:Graph"},"title":""}' n.txt
-python mcp_call.py BlueprintTools get_connected_subgraph '{"node":{"refPath":"<节点refPath>"}}' c.txt
+python mcp_call.py editor_toolset.toolsets.blueprint.BlueprintTools find_nodes '{"graph":{"refPath":"/Game/X.X:Graph"},"title":""}' n.txt
+python mcp_call.py editor_toolset.toolsets.blueprint.BlueprintTools get_connected_subgraph '{"node":{"refPath":"<节点refPath>"}}' c.txt
 # 证实 connected_pins 双向互指即连线成功；save_assets 必须带 asset_paths 数组
 ```
 
@@ -143,12 +143,15 @@ python mcp_call.py BlueprintTools get_connected_subgraph '{"node":{"refPath":"<�
 | 主窗口快照 | 会被 MCP 截断（约 9KB 出现 `[truncated]`），但其中子控件的 ref 仍可点击 |
 | 第二显示器 | desktool 坐标是全虚拟桌面绝对坐标 |
 
-### 4.5 模态框死锁救援（MCP 全部超时时立即执行）
+### 4.5 MCP 全超时后的确认式救援
+
+先截图、枚举窗口并检查日志/进程。只有确认存在无害关闭类模态框时才执行：
 
 ```bash
 python wb_call.py desktool desktool.window_control '{"window":"<编辑器窗口标题>","pin":true}'
 python wb_call.py desktool desktool.send_keys '{"text":"{Escape}"}'
-sleep 2 && python mcp_call.py SlateInspectorToolset Windows '{}' check.txt   # 正常返回即解锁
+# 等待短暂 UI 响应后再次调用只读 Windows 工具确认恢复
+python mcp_call.py SlateInspectorToolset.SlateInspectorToolset Windows '{}' check.txt
 python wb_call.py desktool desktool.window_release '{}'
 ```
 
@@ -156,7 +159,7 @@ python wb_call.py desktool desktool.window_release '{}'
 
 ## 5. 纪律要点（与 SKILL.md 的衔接）
 
-1. 引擎内通道操作发生在**游戏线程**：任何模态框都会让全部 MCP 调用超时——先怀疑死锁，不要先怀疑网络。
+1. 引擎内通道操作发生在**游戏线程**：模态框是全部 MCP 调用超时的高优先级候选，但不是唯一原因；先用桌面截图、窗口、进程和日志确认。
 2. 每次会话结束后清理：窗口 `window_release`、测试资产处理（`PROCESS_HYGIENE.md`）。
 3. 涉及编译（如新增注册代码）→ 走 SKILL.md §3 编译入口与 R8 禁令。
 4. 「能否 X」类二元事实（窗口能开吗、连线成功吗）一律自动化取证，不推给用户。

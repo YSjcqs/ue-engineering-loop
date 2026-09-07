@@ -1,99 +1,88 @@
 # 禁忌清单全集（TABOO_LIST）
 
-> 本文件是 SKILL.md §6 的完整展开。SKILL.md 只保留**五大红线**（最灾难性的不可挽回项），其余 22 条在此。
-> **纪律**：所有 27 条都是红线，违反任意一条都按 Gate 违反处理（产出无效、回退重做）。五大红线（★）之所以单列在 SKILL.md，是因为它们的代价是用户数小时/引擎污染/假成功，且 AI 最容易在疲劳或上下文压缩时遗忘。
-> 每条都标注了对应的 Gate / 硬规则 / 文件位置，便于追溯根因。
+> 本文件是 SKILL.md §6 的完整展开。每条规则使用稳定、唯一的 ID；新增规则不得复用或重排旧 ID。违反适用规则按对应 Gate 失败处理。不适用项必须标 `N/A + 理由`。
 
----
+## 五大红线
 
-## 五大红线（★ SKILL.md §6 同步保留，最优先记忆）
-
-| # | 红线 | 代价 | 权威位置 |
+| ID | 红线 | 代价 | 权威位置 |
 |---|---|---|---|
-| ★1 | **自主 clean/rebuild/全量重编**，或删除中间产物当排错手段 | 用户数小时（4517 actions / 1.5h） | §3.2 R8 / `UE_BUILD_PITFALLS.md` §1.6 |
-| ★2 | **不跑引擎测试就宣称功能正确**；未经用户确认就跳过引擎内测试 | 假成功（最危险失效模式） | §2.4 R2/R6 / `QA_EVIDENCE_LADDER.md` |
-| ★3 | **未经用户逐次授权修改引擎源码**（`Engine/` 树内任何文件） | 引擎污染、升级丢失补丁 | §3.3 零引擎侵入 |
-| ★4 | **替用户点有状态弹窗的按钮**（重建模块/迁移/禁插件/Assert 的 Yes-No/Crash Reporter） | 触发破坏性操作、状态污染 | `STARTUP_STUCK_DIAGNOSIS.md` §2.3 |
-| ★5 | **失败后无新证据地重试**（Zero-Delta Retry） | 错误方向扩大、补丁堆叠 | `PROMPT_CONTRACTS.md` §5 |
+| `BUILD-REBUILD-01` | 自主 clean/rebuild/全量重编，或删除中间产物当排错手段 | 数小时构建成本 | SKILL.md §3.2 / `UE_BUILD_PITFALLS.md` §1.6 |
+| `VALIDATE-RUNTIME-01` | 未完成适用的运行/引擎验证就宣称功能正确；把零测试当通过 | 假成功 | SKILL.md §2.4 / `QA_EVIDENCE_LADDER.md` |
+| `ENGINE-SOURCE-01` | 未经用户逐次授权修改 `Engine/` 树 | 引擎污染、升级丢失 | SKILL.md §3.3 |
+| `UI-MODAL-01` | 替用户点击会改变状态的弹窗按钮 | 破坏性操作、状态污染 | `STARTUP_STUCK_DIAGNOSIS.md` §2.3 |
+| `RETRY-EVIDENCE-01` | 失败后无新证据地重试 | 补丁堆叠、双实例 | `PROMPT_CONTRACTS.md` §5 |
 
----
+## 完整 27 条
 
-## 完整 27 条禁忌清单（按主题分组）
+### A. 读门与证据门（5 条）
 
-### A. 读门 / 证据门类（5 条）
-
-| # | 禁忌 | 关联 Gate |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| 1 | 不读知识文件/源码就动手（读门） | 读门 |
-| 2 | 凭记忆写项目内/引擎 API、不核实签名（实测大量 API 名与直觉不符，见 `UE_RUNTIME_GOTCHAS.md` §5） | 读门 |
-| 3 | 不读日志就诊断（Bug 协议） | 证据门 / Bug 协议 |
-| 7 | 编译结果不贴输出、测试结果无证据（验证门） | 证据门 |
-| 16 | 发现设计文档与实测不符时擅自改原文档——写入 STATUS「勘误候选」区（`CONTEXT_MANAGEMENT.md`） | 交接门 |
+| `READ-CONTEXT-01` | 不读项目知识文件和相关源码就动手 | 读门 |
+| `READ-API-02` | 凭记忆写项目/引擎 API，不核实真实签名与版本 | 读门 |
+| `EVIDENCE-LOG-01` | 未读当前版本日志就诊断 bug | 证据门 |
+| `EVIDENCE-OUTPUT-02` | 编译或测试结论不附真实输出、文件行号或日志 | 证据门 |
+| `EVIDENCE-DOC-03` | 实测与权威文档冲突时静默覆盖原文，而不记录勘误与授权边界 | 交接门 |
 
-### B. 验证门类（5 条，含★2）
+### B. 验证与重试（5 条）
 
-| # | 禁忌 | 关联 |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| ★2 | 不跑引擎测试就说功能正确；未经用户确认就跳过引擎内测试 | §2.4 R2/R6/R7 |
-| 4 | 不跑引擎测试就说功能正确（R2/R6）；未经用户确认就跳过引擎内测试（R7/硬规则 7） | §2.4 |
-| 15 | 把「零测试执行」当验证通过（★ 最危险的假成功）——headless 必须看退出码（2=零测试=失败） | `AUTOMATION_TESTING.md` §1.3 |
-| 17 | 把本可自动化的验证推给用户——「能否 X」类二元事实一律自动化；只有主观判断交给用户 | `QA_EVIDENCE_LADDER.md` §6 |
-| 19 | 低层绿灯冒充高层完成（T3/T4 缺失时宣称功能完成）；用旧版本产物的旧绿灯证明当前代码 | `QA_EVIDENCE_LADDER.md` §1 |
-| 20 | 失败后无新证据地重试（Zero-Delta Retry）——★5 | `PROMPT_CONTRACTS.md` §5 |
+| `VALIDATE-RUNTIME-01` | 未达到任务最低证据层就宣称功能正确 | 验证门 / 五大红线 |
+| `VALIDATE-ZERO-02` | 把零测试、无终止标记或版本不明的结果当通过 | `AUTOMATION_TESTING.md` |
+| `VALIDATE-DELEGATE-03` | 把可自动判定的二元事实无理由推给用户 | `QA_EVIDENCE_LADDER.md` §6 |
+| `VALIDATE-LEVEL-04` | 用低层绿灯冒充高层完成，或用旧产物证明当前源码 | T0–T4 |
+| `RETRY-EVIDENCE-01` | 无新证据、无新假设作废地重复同一失败动作 | 五大红线 |
 
-### C. 编译纪律类（4 条，含★1）
+### C. 编译纪律（4 条）
 
-| # | 禁忌 | 关联 |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| 5 | 在编译阶段探测/断言引擎通道状态并据此降级（硬规则 1 时序纪律） | §2.5-1 |
-| 10 | 反复试错编译（先读代码确认 API，一次写对） | §3 / `UE_BUILD_PITFALLS.md` §3 |
-| 11 | RiderMCP 不可达时未经用户授权擅自命令行编译（§3.1） | §3.1 |
-| ★1 | 自主 clean/rebuild/全量重编，或删除中间产物当排错手段（§3.2 R8） | §3.2 / `UE_BUILD_PITFALLS.md` §1.6 |
+| `BUILD-TIMING-01` | 在编译阶段探测引擎通道并据此宣布降级 | SKILL.md §2.5 |
+| `BUILD-GUESS-02` | 不读错误原文就反复试错编译 | `UE_BUILD_PITFALLS.md` |
+| `BUILD-FALLBACK-03` | RiderMCP 不可达时未经授权擅自命令行编译 | SKILL.md §3.1 |
+| `BUILD-REBUILD-01` | 自主 clean/rebuild/全量重编 | 五大红线 |
 
-### D. MCP / 通道类（4 条）
+### D. MCP 与启动通道（4 条）
 
-| # | 禁忌 | 关联 |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| 6 | 机械照抄配置文件里的项目路径（硬规则 3） | §2.5-3 |
-| 12 | 把调用超时当失败而盲目重试（硬规则 4）——先查进程，否则制造双实例 | §2.5-4 / `UE_BUILD_PITFALLS.md` §1.1 |
-| 26 | 引擎启动无响应时无限等待或重发启动，而不用实机通道截图+日志取证（硬规则 13）——轮询必须有上限，超限换取证 | `STARTUP_STUCK_DIAGNOSIS.md` |
-| ★4 | 替用户点有状态弹窗的按钮（重建模块/迁移/禁插件/Assert 的 Yes-No/Crash Reporter）——取证后交用户，不猜按钮语义 | `STARTUP_STUCK_DIAGNOSIS.md` §2.3 |
+| `MCP-PROJECT-01` | 机械照抄配置中的项目路径，不以实际 `.uproject` 为准 | SKILL.md §2.5 |
+| `MCP-TIMEOUT-02` | 把调用超时当确定失败并盲目重试 | `UE_BUILD_PITFALLS.md` §1.1 |
+| `MCP-WAIT-03` | 启动无响应时无限等待或重复启动，不转截图/窗口/日志取证 | `STARTUP_STUCK_DIAGNOSIS.md` |
+| `UI-MODAL-01` | 未取证、未授权就处理有状态模态框 | 五大红线 |
 
-### E. 进程 / 窗口卫生类（3 条）
+### E. 进程与窗口卫生（3 条）
 
-| # | 禁忌 | 关联 |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| 13 | 按进程名杀引擎——会误杀用户编辑器；走 PID 三步协议（`PROCESS_HYGIENE.md`） | §2.5-10 / `PROCESS_HYGIENE.md` §1 |
-| 14 | 用过窗口控制不释放——overlay 残留（`PROCESS_HYGIENE.md` §2） | §2.5-10 |
-| 18 | 一阶段完成后不清理就进下一阶段——清理清单 + 独立 commit | `PROCESS_HYGIENE.md` §3 |
+| `PROCESS-OWNERSHIP-01` | 按进程名或时间差终止引擎；未 register 精确 PID 就 cleanup | `PROCESS_HYGIENE.md` §1 |
+| `WINDOW-RELEASE-02` | 使用窗口锁定/置顶后不调用 release | `PROCESS_HYGIENE.md` §2 |
+| `CLEANUP-SCOPE-03` | 清理未登记进程、未授权资产或其他会话状态 | `PROCESS_HYGIENE.md` §3 |
 
-### F. 范围 / 需求门类（2 条）
+### F. 范围与协作（3 条）
 
-| # | 禁忌 | 关联 |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| 9 | 一次改动越过任务边界、自行改需求（需求门）；扩大范围、破坏性操作前不暂停说明 | 需求门 |
-| 21 | 并行时多个 Agent 同时写同一文件——一个文件只有一个写入 owner（`PARALLEL_ORCHESTRATION.md`） | `PARALLEL_ORCHESTRATION.md` |
+| `SCOPE-CHANGE-01` | 越过任务边界、自行改需求或扩大破坏性操作 | 需求门 |
+| `PARALLEL-OWNER-02` | 多 Agent 同时写同一文件或同一状态源 | `PARALLEL_ORCHESTRATION.md` |
+| `USER-AUTHORITY-03` | 技能默认流程覆盖用户显式只读、禁提交或权限限制 | SKILL.md 顶部优先级 |
 
-### G. Slate / UI 自动化类（3 条）
+### G. Slate 与 UI 自动化（2 条）
 
-| # | 禁忌 | 关联 |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| 24 | 在 Slate graph 控件上用坐标点 pin（几何在节点框外，9/9 失败）——一律 ref 操作 | `PITFALLS_SLATE_UI.md` §2.3 |
-| 25 | 用坐标硬试/猜坐标定位 UI——不能读图就用 ref/UIA/引擎接口，**不要猜** | `PITFALLS_SLATE_UI.md` §7 |
-| 8 | 改完不验证就交付；不更新状态就结束会话（交接门） | 验证门 / 交接门 |
+| `SLATE-REF-01` | 在可获得 Slate ref 时仍用坐标连接 graph pin | `PITFALLS_SLATE_UI.md` §2.3 |
+| `UI-GUESS-02` | 读不到图或控件树时猜坐标、猜按钮语义 | `PITFALLS_SLATE_UI.md` §7 |
 
-### H. 引擎侵入类（1 条，★3）
+### H. 引擎侵入（1 条）
 
-| # | 禁忌 | 关联 |
+| ID | 禁忌 | 关联 |
 |---|---|---|
-| ★3 | 未经用户逐次授权修改引擎源码（§3.3 零引擎侵入） | §3.3 / `PITFALLS_SLATE_UI.md` 附录 A |
+| `ENGINE-SOURCE-01` | 未经用户逐次授权修改引擎源码 | 五大红线 / SKILL.md §3.3 |
 
----
+## 计数与维护
 
-## 与 SKILL.md 的关系
-
-- **SKILL.md §6** 只保留五大红线（★1-★5）+ 一行指针「完整 27 条见 `references/TABOO_LIST.md`」。
-- 本文件按主题分组（A-H），每条标注 # 编号（与历史版本 §6 编号一致，便于交叉引用）+ 关联 Gate/规则/文件位置。
-- 当某条规则触发时，AI 应同时引用本文件的 # 编号与对应 Gate/硬规则，便于追溯根因。
-
-> **维护约定**：新增禁忌时，先判断是否属五大红线（代价是否达到「数小时/假成功/引擎污染」级别）；是则同步进 SKILL.md §6，否则只进本文件。所有 27 条都按 Gate 违反处理。
+- 唯一规则数：A 5 + B 5 + C 4 + D 4 + E 3 + F 3 + G 2 + H 1 = **27**。
+- 五大红线在主题表中复用同一 ID，不产生第二条规则。
+- 新增规则时使用 `<DOMAIN>-<TOPIC>-<NN>`，并同步更新计数与 `scripts/validate_skill.py` 的唯一 ID 校验。

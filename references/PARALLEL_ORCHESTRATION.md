@@ -13,7 +13,7 @@
 | **第一轮：理解** | A 盘点旧工作流；B 画数据/调用链拓扑；C 设计 Automation 与可见 QA 矩阵 | 三条 lane 都返回「结论 + 证据入口 + 未知项」，Coordinator 冻结统一合同 | 三个最耗阅读时间的调查接近最慢一条 lane 的耗时，而非三者相加 |
 | **第二轮：交付** | 业务实现、测试代码、QA manifest 各自写独立文件域 | 公共接口已稳定、文件 owner 不重叠、每条 lane 有自己的 Gate | 实现过程中测试与 QA 不再空等 |
 | **第三轮：集成** | **停止并行写**，由唯一集成者处理 seam、构建最终二进制 | Diff、测试与任务卡全部回收；接口变化明确作废受影响结果 | 避免合并阶段继续制造分叉 |
-| **第四轮：证明** | Automation 可用隔离进程并行 | 真实 Editor、共享 fixture 与桌面输入按租约**串行** | 证据全部来自同一最终源码 |
+| **第四轮：证明** | 只读、独立结果根且项目明确支持隔离的 Automation 可并行 | 本技能 headless runner、真实 Editor、共享 fixture 与桌面输入按项目租约**串行** | 证据全部来自同一最终源码 |
 
 **主动保留串行 Barrier**：公共接口、同一资产、UBT、Editor、fixture、桌面输入和最终完成裁决保持串行。Barrier 不是损失，而是让并行结果重新属于同一个系统。
 
@@ -38,9 +38,9 @@
 
 ```
 □ UBT 全局互斥锁（-WaitMutex）：同一时刻只允许一个编译
-□ Editor 进程：共享 Editor 按租约串行，或每 lane 独立引擎实例 + 独立 UserDir
+□ Editor 进程：内置 headless runner 要求机器级独占；发现任何现有或不可枚举的 UnrealEditor 时 fail-closed
 □ 端口：引擎内通道/服务端口按 lane 分配
-□ Saved 目录 / AssetRegistry / 自动化 worker：按 lane 独立根目录
+□ Saved 目录 / AssetRegistry / 自动化 worker：只有项目提供并验证独立 UserDir/结果根时才允许并行
 □ 桌面输入（截图/按键）：物理上互斥，必须串行租约
 □ 测试 fixture：写入 fixture 必须 opt-in，禁止并行污染生产内容
 ```

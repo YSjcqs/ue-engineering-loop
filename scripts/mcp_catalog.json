@@ -1,4 +1,15 @@
 {
+  "schema_version": 2,
+  "generated_at_utc": "2026-09-06T00:00:00+00:00",
+  "protocol_version": "2024-11-05",
+  "server_info": null,
+  "producer": "historical-snapshot/pre-1.1",
+  "provenance_source": "historical operator note; not server-verifiable",
+  "engine_version": "UE 5.8 (historical snapshot; exact CL not recorded)",
+  "model_context_protocol_version": "unknown",
+  "all_toolsets_version": "unknown",
+  "provenance_complete": false,
+  "toolset_digest_sha256": "7bb236f6a6d1c018d034ffdd0d84ab9fe829b5bd24d71b4e77811c4b02469e62",
   "server": "http://127.0.0.1:8000/mcp",
   "toolset_count": 52,
   "toolsets": [

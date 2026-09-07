@@ -1,6 +1,6 @@
 # MCP 通道指南（MCP_CHANNELS）
 
-> 三源合一：通道能力与排查（原 MCP_ENVIRONMENT）+ 配置与启用（原 MCP_SETUP_GUIDE）+ 环境快速接入（原 ENVIRONMENT_QUICKSTART）。
+> 三源合一：通道能力与排查、配置与启用、环境快速接入。
 > 通用纪律（先探测后使用、时序纪律、降级路径）以 SKILL.md 为准；本篇解决「通道怎么用、连不上怎么办、环境怎么配」。
 
 ---
@@ -15,7 +15,7 @@
 | **日志终审** | 一切结论的最终裁判 | 直接读 `<Project>/Saved/Logs/*.log` | — | 无需任何通道 |
 
 > 🚫 **引擎内通道明确不采用社区 MCP 方案**（gimmeDG/chongdashu/ChiR24 等）：官方维护、与引擎版本绑定，社区方案不作为替代或备选。
-> 端口随环境变化；换环境改 `env_health_check.ps1 -Endpoints` 参数即可，纪律不变。
+> 端口随环境变化；换环境同时改 `env_health_check.ps1 -Endpoints` 与 `-ExpectedStatus`。HTTP 状态匹配只证明端点合同，工具可用性仍需 MCP initialize + 只读工具握手。
 
 ---
 
@@ -42,12 +42,14 @@
 - `rebuild`（boolean，**默认 false = 增量**）：★ **R8 禁令的直接管辖对象——未经用户一次一确认，禁止传 `rebuild:true`**。
 - `filesToRebuild`（可选文件列表）：按文件编译。
 - **Unreal 语义**（官方描述）：编辑器已连接且 Live Coding 可用 → 触发 **Hot Reload 编译**；否则由 **UBT 编译主 Editor target**。
-- 实测：对 `F:/Unreal/Blank`（引擎解决方案）发起增量构建，返回 sessionId 后 `build_solution_state` 轮询 2 分钟+ 仍 `Running` 且 `problems:[]`——引擎级增量构建以**分钟**计，轮询间隔建议 20~30s，不要因慢就重发构建。
+- 历史案例：对某 UE 5.8 源码引擎解决方案发起增量构建，返回 sessionId 后 `build_solution_state` 轮询 2 分钟+ 仍 `Running` 且 `problems:[]`——引擎级增量构建以分钟计，轮询间隔建议 20~30s，不要因慢就重发构建。
 
 **★ MCP 会话协议实测坑（2026-09-06）**：streamable-HTTP 会话**不能跨进程/连接复用**——用 curl 分两次调用（第一次 initialize、第二次 tools/call 带 session-id）会报 `Streamable HTTP session not found`。**必须在同一进程内完成 initialize → notifications/initialized → tools/call 三步**。用 `scripts/rider_call.py` 即可（自动完成三步）：
 ```bash
-python scripts/rider_call.py '{"name":"get_solution_projects","arguments":{"rootFolder":"F:/Unreal/Blank"}}'
+python scripts/rider_call.py '{"name":"get_solution_projects","arguments":{"rootFolder":"<ProjectRoot>"}}' --timeout 120
 ```
+
+三个 caller 共用 `mcp_common.py`：0=成功，2=参数错误，3=网络错误，4=协议/解析错误，5=JSON-RPC 或工具错误，6=本地输出 I/O 错误。只有 0 可继续；错误写 stderr，输出文件采用原子替换。默认只允许 loopback 并禁止 HTTP 重定向；连接远程地址必须取得用户明确授权、使用 HTTPS 并传 `--allow-remote`。这些轻量 caller 不接收认证 headers；需要凭据的远程服务应交给受管连接器，不在命令行传 token。
 
 **使用要点**：
 - 工具需**显式传项目路径参数**（`rootFolder` / `projectPath`）；不传时服务端返回「Unable to determine the target project」并列出当前打开的项目（以此确认 rootFolder）。判据：返回的配置/工程里应包含当前项目。
@@ -66,11 +68,11 @@ python scripts/rider_call.py '{"name":"get_solution_projects","arguments":{"root
 
 > 所有工具清单以实际连接后 `tools/list` / `list_toolsets` 返回为准，**禁止凭文档臆测工具名**。**工具集缺失的判定与处置见 §5.2 排查树⑥**。调用约定三套并存见 `SLATE_AUTOMATION.md` §1。
 >
-> **★ 重新生成 mcp_catalog.json**：UE 升级或 AllToolsets 更新后，`scripts/mcp_catalog.json`（2.3 MB 快照，`mcp_call.py` 用来解析短 toolset 前缀到全限定名）会漂移。在引擎内通道链接成功的前提下，跑：
+> **★ 重新生成 mcp_catalog.json**：UE 升级或 AllToolsets 更新后，`scripts/mcp_catalog.json` 会漂移。当前历史快照标记 `provenance_complete=false`，因此默认禁用短 toolset 名解析；可直接传全限定名，或在引擎内通道链接成功后用真实版本信息重新生成：
 > ```bash
-> python scripts/dump_mcp_catalog.py
+> python scripts/dump_mcp_catalog.py --engine-version "UE 5.8 <CL>" --mcp-plugin-version "<version>" --toolsets-plugin-version "<version>"
 > ```
-> 它会调 `list_toolsets` + 逐个 `describe_toolset`，写出新 catalog 覆盖旧文件。退出码：0=成功，1=握手失败，2=工具集为空（AllToolsets 未启用？），3=写入失败。
+> 它会调 `list_toolsets` + 逐个 `describe_toolset`，保留完整 tool schema 和来源版本，全部成功且计数校验通过后再原子替换旧 catalog。任一 toolset 失败都拒绝覆盖；同一输出文件并发生成会失败。退出码：0=成功，2=工具集为空，3=网络失败，4=协议/schema 错误，5=服务端工具错误，6=本地 I/O 或并发锁冲突。
 
 ### 2.3 实机通道（Workbench）
 
@@ -109,20 +111,22 @@ netstat -ano | grep -E "64482|8000|3939"       # 端口是否监听
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File "<本技能>/scripts/env_health_check.ps1" -ProjectPath "<uproject 所在目录>"
-# 端点可参数化：
-#   -Endpoints "IDE_BUILD=127.0.0.1:64482/stream,ENGINE_MCP=127.0.0.1:8000/mcp,DESKTOP=127.0.0.1:3939/mcp"
+# 端点与预期状态码同时参数化：
+#   -Endpoints "IDE_BUILD=http://127.0.0.1:64482/stream,ENGINE_MCP=http://127.0.0.1:8000/mcp,DESKTOP=http://127.0.0.1:3939/mcp"
+#   -ExpectedStatus "IDE_BUILD=200;ENGINE_MCP=200|405;DESKTOP=405"
+# 默认只允许 loopback；远程探测需用户明确授权、HTTPS，并显式传 -AllowRemote
 ```
 
 ### 3.3 检查结果解读
 
-| 结果 | 含义 | 下一步 |
+| HTTP 探测结果 | 含义 | 下一步 |
 |---|---|---|
-| IDE 构建 `200` | 在线 | 可用 |
+| IDE 构建 `200` | 符合该端点的 HTTP 合同 | 继续 MCP initialize + 只读工具握手，成功后才标可用 |
 | IDE 构建 `000`/超时 | 不可达 | 确认 Rider 已启动且 MCP Server 已启用；仍不可达 → 用 §6.2 标准话术提示用户 |
-| 引擎内 `200`/`405` | **在线** | 可用（405 = 只收 POST，正常） |
-| 引擎内 `000`/超时 | 不可达 | **进入 §5 排查树**（注意时序纪律：编译阶段探测必为 000，属正常） |
-| 实机 `405` | 在线 | 可用 |
-| 实机 `000` | 不可达 | 确认工作台已启动 |
+| 引擎内 `200`/`405` | 符合 HTTP 合同（405 可表示只收 POST） | 继续 initialize + `list_toolsets`/只读工具，不直接写“已链接” |
+| 引擎内 `000`/超时 | 不可达 | **进入 §5 排查树**（编译阶段探测无效） |
+| 实机 `405` | 符合 HTTP 合同 | 继续只读工具握手 |
+| `401/403/404/429` 等其他 4xx | HTTP 服务可达但不符合端点合同 | 记录 `HTTP_UNEXPECTED`，查认证、路径或限流，不标 ONLINE |
 
 > ⚠️ **两种 UEMCP 检查的时机语义**：①会话启动健康检查只反映「当前运行的引擎实例」状态（可能是旧代码进程），仅作情报；②闭环步骤③的链接检查必须以「编译成功 + 引擎已用新产物启动」为前提。**编译阶段禁止探测/断言引擎内通道**（SKILL.md 硬规则 1）。
 
@@ -182,7 +186,7 @@ powershell -ExecutionPolicy Bypass -File "<本技能>/scripts/env_health_check.p
         期望 200/405 且只读工具能返回。仍失败 → 检查防火墙 / MCP 版本兼容 / 客户端配置 URL
 ```
 
-> ⚠️ **只有 ③ 的「询问用户」是允许与用户交互的分支**；其余步骤 AI 应自主排查，不要用问题打断用户。
+> ⚠️ ③ 与 ⑥ 都会改变项目插件状态，必须先取得用户授权；其余只读排查步骤由 AI 自主完成，不用问题打断用户。
 > 本排查树只在闭环步骤③（编译成功 + 新产物启动）时执行；完整实测复盘见 `CASE_STUDY_UEMCP_OUTAGE.md`。
 
 ---
@@ -198,7 +202,7 @@ powershell -ExecutionPolicy Bypass -File "<本技能>/scripts/env_health_check.p
 **处置规则**：
 1. **AI 一律调用时显式传项目路径参数**，不依赖配置里的 `IJ_MCP_SERVER_PROJECT_PATH`（与哪个文件生效无关，始终安全）；
 2. 发现两份不一致 → **提醒用户把两者都更新为当前项目目录**；
-3. `env_health_check.ps1` 会列出配置值供比对（含 DRIFT 告警）；
+3. `env_health_check.ps1` 会只读列出 `.workbuddy` / `.codebuddy` 中 Rider 项目路径并在不一致时输出 DRIFT；不显示其他 headers 或凭据；
 4. 不确定时以实际项目 `.uproject` 位置为准。
 
 > **同类陷阱：技能目录双副本**——技能可能同时存在于 `.codebuddy\skills\` 与 `.workbuddy\skills\`，会话若加载旧副本则所有规则不生效。修改技能后务必同步或删除旧副本。

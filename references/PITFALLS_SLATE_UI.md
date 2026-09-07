@@ -1,7 +1,7 @@
 # Slate 自动化踩坑手册（PITFALLS_SLATE_UI）
 
-> 本手册沉淀自 2026-09-06 实测（UE 5.8.2 源码版，Demo 项目）+ 持续积累。
-> 每一条都经过实际验证，含根因分析与解法。`SLATE_AUTOMATION.md` 只放工作流，细节与根因在此。
+> 本手册沉淀自 2026-09-06 的 UE 5.8.2 源码版 Demo 项目观察。
+> 作为版本化诊断线索使用；跨引擎分支应用前按 `CLAIM_EVIDENCE_REGISTRY.md` 复核。`SLATE_AUTOMATION.md` 只放工作流，细节与根因在此。
 > **纪律**：本技能默认**零引擎侵入**——改引擎源码的方案全部收入附录 A，须用户逐次明确授权才可使用。
 
 ---
@@ -48,7 +48,7 @@ Snapshot 里蓝图节点只是**一整块 image**（仅 pos/size），无内部 
 ### 2.3 为什么坐标法注定失败（不要重蹈覆辙）
 **SGraphPin 的 widget 几何在节点框外**（实测）：入口节点 142px 宽，pin 中心在右缘外约 31px；Print String 的 exec-out 在节点右缘外约 62px。按"节点框边缘 ± 几像素"推的坐标**根本不在 pin widget 几何内**，mousedown 一律命中节点本体（撤销提示 `Undo: Move Node`）。曾试 9 组坐标/手动序列，9/9 失败。
 
-**结论：永远不要用坐标连 pin，先确认快照里有 pin ref。**（SKILL.md 禁忌 24）
+**结论：永远不要用坐标连 pin，先确认快照里有 pin ref。**（`SLATE-REF-01`）
 
 ### 2.4 Snapshot 的四种"丢失机制"（排查其他隐形控件）
 1. 无 role 且无 label → 完全 skip（**pin 属此类**）；
@@ -58,10 +58,11 @@ Snapshot 里蓝图节点只是**一整块 image**（仅 pos/size），无内部 
 
 ---
 
-## 3. 模态框死锁与 desktool 救援（已两次实测）
+## 3. MCP 全超时与模态框候选诊断
 
-- **触发**：任何弹模态框的操作（点 "Blueprint Class" 菜单项、`BlueprintTools.create` 工具）→ 所有 MCP 调用（含 `Windows`、裸 curl）超时无响应。HTTP 层接受连接但游戏线程不回包。
-- **救援流程（desktool，秒级）**：
+- **观察**：登记案例中，弹模态框的操作（点 "Blueprint Class" 菜单项、`BlueprintTools.create`）曾导致全部引擎内 MCP 调用超时。相同症状也可能来自游戏线程长任务、服务端卡死、引擎退出或极端 IO/CPU 拥塞，因此不得用等号直接定因。
+- **确认**：先用 desktool 截图与窗口枚举，再结合进程和日志；只有看到模态窗口或等价证据才进入救援。
+- **救援流程（确认后执行）**：
   1. `desktool.window_control {"window":"<编辑器窗口标题>","pin":true}` 锁定前置；
   2. `desktool.send_keys {"text":"{Escape}"}` —— UE 的 Slate 模态框默认响应 Esc；
   3. 等 2 秒，`SlateInspectorToolset.Windows` 正常返回即解锁；
@@ -130,7 +131,7 @@ python wb_call.py desktool desktool.send_keys '{"text":"{Ctrl+V}"}'
 
 ## 6. 编译相关坑（与 SKILL.md §3 编译纪律衔接）
 
-1. **编译前必须关 UnrealEditor**（DLL 锁；编辑器连着时 UBT 相关工具会走 Live Coding/Hot Reload）。
+1. **先判构建模式再决定是否关 UnrealEditor**：Rider 明确走 Live Coding/Hot Reload 时可保持编辑器运行；外部 UBT、全量/rebuild、Game target、目标 DLL 被占时必须关闭。模式不明时先查运行配置与构建输出，不替用户盲关编辑器。
 2. **PowerShell 不能在管道中调用 .exe/.bat**：`& "x.exe" args | Out-File` 报 `CantActivateDocumentInPipeline`（Build.bat 同样）。→ 用 **Bash 直接调 exe + 重定向**（仅限用户授权的命令行兜底场景）。
 3. **UBA（UnrealBuildAccelerator）权限问题**：日志大量 `UbaSessionServer - SetFileInformationByHandle ... (Access is denied.)` → 产物 `.lib` 损坏 → `LNK1136 文件无效或损坏`（报在无关模块，勿误判为自己的代码错误）。→ 加 **`-NoUBA`**；根治可管理员删除 `C:\ProgramData\Epic\UnrealBuildAccelerator`。**这是环境修复，不是 rebuild 理由**（R8）。
 4. **判断编译是否成功**：比较插件 DLL 与源文件的 mtime，DLL 更新 = 成功；`Build.version is newer` 会触发 makefile 重建（4517 个 action 的大范围重编，二三十分钟）——**这正是 R8 要防的场景**，任何可能改动 `Build.version` 的操作都属禁止项。

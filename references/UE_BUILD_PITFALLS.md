@@ -56,7 +56,7 @@ IDE 集成通道的编译/运行配置/文件检查工具，凡涉及项目的�
 | **主入口** | `build_solution_start`（方案级构建） | 日常/完整构建；项目解决方案与引擎解决方案均可（引擎/引擎插件改动同样覆盖） |
 | 辅助 | `execute_run_configuration`（运行配置） | 按运行配置编译/启动（如 Uproject 配置、启动编辑器配置） |
 | 辅助 | `get_file_problems` | 改完代码立即静态检查，辅助定位编译错误 |
-| 兜底 | 命令行（Build.bat / UBT） | **仅当 RiderMCP 不可达 + 用户明确授权**；卫生细节见 §7 |
+| 兜底 | 命令行（Build.bat / UBT） | **仅当 RiderMCP 不可达 + 用户明确授权**；卫生细节见 §6 速查与 `PROCESS_HYGIENE.md` |
 
 **观测提示（历史记载，非禁令）**：有记载称在引擎解决方案上做方案级构建时出现过「引擎所有目标排成长队列（`BaseTextureBuildWorker`/`BreakpadSymbolEncoder`/`ChaosVisualDebugger`…）+ MSBuild 缺 UBT include 产生海量假错误」的现象。以实测为准：若出现该症状，记录现象与判别特征（日志里出现大量与项目无关的引擎 Program/Worker 目标、多轮 5xx actions）并向用户报告，由用户裁决是否调整入口策略。
 
@@ -77,8 +77,8 @@ IDE 集成通道的编译/运行配置/文件检查工具，凡涉及项目的�
 
 | 层级 | 内容 | 谁做 |
 |---|---|---|
-| **能力边界内** | 入口选择、清理残留编译进程、修复代码错误 | **AI 自己解决** |
-| **能力边界外** | 通道不可达、引擎弹窗、停止构建队列（杀进程无效，IDE 会自动重启） | **必须请用户** |
+| **能力边界内** | 入口选择、只读报告编译 PID/父进程/命令行/锁状态、修复代码错误 | **AI 自己解决** |
+| **能力边界外** | 终止未由当前 build session 精确登记的编译进程、Rider 管理的构建队列、通道不可达、引擎有状态弹窗 | **调用 IDE 的明确取消接口或请用户处理** |
 
 **编译卡住/超时的处理**（长时间无新产物、无输出）：
 1. **先自我诊断根因**；
@@ -87,12 +87,12 @@ IDE 集成通道的编译/运行配置/文件检查工具，凡涉及项目的�
 
 **严禁**：笼统推给用户 / 未经授权换命令行 / 重复启动编译实例。
 
-**发起新编译前**必须确认无残留编译进程（`cl.exe` / `UnrealBuildTool` / `Build.bat` / `MSBuild`），避免多实例争锁导致 makefile 污染与模块重复编译。
+**发起新编译前**必须只读确认是否存在 `cl.exe` / `UnrealBuildTool` / `Build.bat` / `MSBuild`，并记录 PID、父进程、命令行、项目路径和 Rider session。未知归属默认视为用户/IDE 所有，不得按名终止；只有当前 build session 精确登记的进程才可按其取消协议处理。
 
 > **注意**：MSBuild 进程若处于「方案构建队列」中，杀掉会被 IDE 自动重启（实测），必须由用户在 IDE UI 停止。
 > 但**与 UE 编译无关的**临时 MSBuild 进程（如跑 `.proj` 临时文件）**不影响 UE 编译**，不要误判为阻塞（曾误判过一次）。
 
-### 1.6 ★ R8 Rebuild 禁令（★ 权威位置，SKILL.md §3.2 与 §6 ★1 的完整展开）
+### 1.6 ★ R8 Rebuild 禁令（`BUILD-REBUILD-01` 权威展开）
 
 > **本节是 R8 的权威完整版**。SKILL.md §3.2 仅保留速记三句话 + 指针；本节含完整规则、报备话术、违反后果与相关实测。
 >
@@ -104,7 +104,7 @@ IDE 集成通道的编译/运行配置/文件检查工具，凡涉及项目的�
    > 报备话术：「编译需要全量 rebuild：原因 X，预估 N 个 action / 约 M 分钟，影响范围 Y。是否执行？(是/否)」
 4. **超时/卡住不是 rebuild 理由**：`-WaitMutex` 等锁、IDE 排队、超时后查进程——一律等待或排查。
 5. **违反后果**：该次编译结果无效，视为未验证。
-6. **相关实测**：`Build.version is newer` 触发 makefile 重建、LNK1136 的 `-NoUBA` 解法、Live Coding 锁——分别见 §7 速查表、`PITFALLS_SLATE_UI.md` §6、§1.4。
+6. **相关实测**：`Build.version is newer` 触发 makefile 重建、LNK1136 的 `-NoUBA` 解法、Live Coding 锁——分别见 §6 速查表、`PITFALLS_SLATE_UI.md` §6、§1.4。
 
 ---
 
@@ -185,7 +185,7 @@ Editor 独有的 `WITH_EDITORONLY_DATA` 字段在 **Game target 下不存在**�
 
 > ⚠️ **target 编译路径**：
 > - **Editor target → RiderMCP 主入口**（`build_solution_start` / `execute_run_configuration`）；
-> - **Game target → 同样先走 RiderMCP**（方案级构建通常覆盖解决方案内全部 target）；仅当 IDE 下确实无该 target 的构建途径时，才在**用户明确授权后**走命令行（见 §4.2）。
+> - **Game target → 同样先走 RiderMCP**，但“方案构建成功”不证明 Game target 已被包含；必须从 build session 输出、明确 target 名和对应产物时间确认。未覆盖时标 NOT RUN；仅当 IDE 下确实无该 target 的构建途径时，才在**用户明确授权后**走命令行（见 §4.2）。
 
 ```powershell
 # Editor target —— 用 IDE 主构建通道，不要照抄这条命令行
@@ -210,15 +210,15 @@ Build.bat <GameTargetName> Win64 Development -Project="<uproject>" -WaitMutex
 ⚠️ **陷阱**：IDE 里名为 `<Project>` 的 **Uproject 运行配置**实际执行的是 **Editor target**，不是 Game target。名字相同，极易误解。
 
 **规则**：
-1. Game target 优先经 RiderMCP 构建（`build_solution_start` 方案级构建通常覆盖解决方案内全部 target）；
-2. 仅当确认 IDE 下无该 target 构建途径且 RiderMCP 又不可达时，**经用户明确授权**后命令行编译：
+1. Game target 优先经 RiderMCP 构建；从构建输出确认实际 target 名、平台、配置和产物时间。未见 Game target 证据时不得把方案构建绿灯写成“双 target 已通过”；
+2. 当 RiderMCP 不可达，或已确认其当前解决方案/配置无法构建该 Game target 时，**经用户明确授权**后才可命令行编译：
 
 ```powershell
 Engine\Build\BatchFiles\Build.bat <GameTargetName> Win64 Development -Project="<uproject>" -WaitMutex
 ```
 
 **命令行兜底必须同时满足 4 项**：
-1. 主路径（RiderMCP）确已不可达，且用户已明确授权本次命令行；
+1. 已证明 RiderMCP 不可达或无法覆盖该 Game target，且用户已明确授权本次命令行；
 2. Game target 真实名字以 `Source/*.Target.cs` 为准（**不一定**是 `<Project>Game`）；
 3. 在阶段报告与交接记录中**显式标注**「Game target 经命令行编译（原因）」；
 4. 编译前关闭引擎（Live Coding 锁，见 §1.4）。

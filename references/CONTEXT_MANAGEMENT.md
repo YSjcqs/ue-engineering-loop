@@ -158,14 +158,17 @@ Docs/<Plan>/
 
 ---
 
-## 6. Git 工作流
+## 6. Git 工作流（条件化，不越过用户授权）
+
+> 用户显式约束与仓库规则优先。只读任务、用户禁止提交、仓库无 Git 或权限不明时，不创建/修改 STATUS，不执行 commit；将 Current Truth 与 diff 摘要写入最终回复。
 
 ```
 □ 仓库范围：只管需要版本化的目录（如 Plugins/<Plugin>），不含 Docs/Config/Saved
-□ 每阶段独立 commit：`P<NN>: <一句话描述>`
+□ 用户明确授权或仓库规则明确要求时，每阶段独立 commit：`P<NN>: <一句话描述>`
 □ .gitignore 排除：Binaries/、Intermediate/、IDE 缓存
 □ 阶段通过验收后再 commit（不提交未验证的中间态）
 □ Bug 修复独立 commit：`P<NN>-fix: <描述>`
+□ 不适用的交接写入动作标 N/A + 理由，不静默跳过
 ```
 
 **零改框架证明**：`git diff --stat` 只显示新增文件 + 少量依赖声明、框架文件零改动 = 架构解耦成立的直接证据（架构类验收可用此法）。
@@ -179,7 +182,7 @@ Docs/<Plan>/
 □ 2. 读 STATUS.md（完整）
 □ 3. 读 ENGINE_REFERENCES §0（版本勘误）
 □ 4. 读 00_ROADMAP.md（定位当前阶段）
-□ 5. 能力探测（env_health_check.ps1：通道 + 进程 + 端口）
+□ 5. Profile 判定：Core 使用仓库已有检查；仅 Automation Profile 运行 env_health_check.ps1（通道 + 进程 + 端口）
 □ 6. 打开当前阶段文档（只此一份）
 □ 7. 需求门：向用户复述目标/验收标准
 ```

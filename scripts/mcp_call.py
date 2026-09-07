@@ -1,94 +1,102 @@
-import json, sys, urllib.request
+#!/usr/bin/env python3
+"""Call UE ModelContextProtocol tools with strict error handling."""
 
-URL = "http://127.0.0.1:8000/mcp"
-SID = [None]
+from __future__ import annotations
 
-def rpc(payload):
-    data = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
-    if SID[0]: headers["Mcp-Session-Id"] = SID[0]
-    req = urllib.request.Request(URL, data=data, headers=headers, method="POST")
-    resp = urllib.request.urlopen(req, timeout=120)
-    body = resp.read().decode("utf-8", "replace")
-    ctype = resp.headers.get("Content-Type", "")
-    sid = resp.headers.get("Mcp-Session-Id")
-    if sid: SID[0] = sid
-    return body, ctype
+import argparse
+import json
+import sys
+from pathlib import Path
 
-def parse_obj(body, ctype):
-    if "text/event-stream" in ctype:
-        for line in body.splitlines():
-            line = line.strip()
-            if line.startswith("data:"):
-                d = line[len("data:"):].strip()
-                try:
-                    obj = json.loads(d)
-                    if "result" in obj or "error" in obj: return obj
-                except Exception: pass
+from mcp_common import (
+    EXIT_PROTOCOL,
+    EXIT_USAGE,
+    McpClient,
+    McpFailure,
+    atomic_write_text,
+    parse_json_object,
+    render_result,
+)
+
+DEFAULT_URL = "http://127.0.0.1:8000/mcp"
+CATALOG_PATH = Path(__file__).with_name("mcp_catalog.json")
+
+
+def resolve_toolset(
+    short_name: str | None,
+    catalog_path: Path = CATALOG_PATH,
+    allow_stale_catalog: bool = False,
+) -> str | None:
+    if not short_name or short_name == "-":
         return None
-    try: return json.loads(body)
-    except Exception: return None
-
-def init():
-    body, ctype = rpc({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"p","version":"1"}}})
-    rpc({"jsonrpc":"2.0","method":"notifications/initialized","params":{}})
-    return parse_obj(body, ctype)
-
-import os
-_CAT = None
-def _resolve_ts(ts):
-    global _CAT
-    if ts is None or ts == "-":
-        return None
-    if "." in ts:  # already fully qualified
-        return ts
-    # resolve short prefix -> full name from catalog
+    if "." in short_name:
+        return short_name
     try:
-        if _CAT is None:
-            with open(os.path.join(os.path.dirname(__file__), "mcp_catalog.json"), encoding="utf-8") as f:
-                _CAT = json.load(f)
-        for t in _CAT["toolsets"]:
-            n = t["name"]
-            if n == ts or n.startswith(ts + ".") or n.endswith("." + ts) or n == ts:
-                return n
-        # fallback: first contains
-        for t in _CAT["toolsets"]:
-            if ts in t["name"]:
-                return t["name"]
-    except Exception:
-        pass
-    return ts
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise McpFailure(f"cannot read MCP catalog {catalog_path}: {exc}", EXIT_PROTOCOL) from exc
 
-def call(tool, args=None, ts=None, rid=2):
-    fts = _resolve_ts(ts)
-    if fts:
-        # route through the call_tool meta-tool: toolset tool
-        params = {"name": "call_tool", "arguments": {
-            "toolset_name": fts, "tool_name": tool, "arguments": args or {}}}
-    else:
-        params = {"name": tool, "arguments": args or {}}
-    body, ctype = rpc({"jsonrpc":"2.0","id":rid,"method":"tools/call","params":params})
-    obj = parse_obj(body, ctype)
-    if obj is None: return {"_error": "no-parse", "raw": body[:500]}
-    if "error" in obj: return {"_error": obj["error"]}
-    res = obj.get("result", {})
-    texts = [c.get("text","") for c in res.get("content",[]) if c.get("type")=="text"]
-    joined = "\n".join(texts)
-    return joined
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("toolsets"), list):
+        raise McpFailure(f"invalid MCP catalog root: {catalog_path}", EXIT_PROTOCOL)
+    if catalog.get("provenance_complete") is not True and not allow_stale_catalog:
+        raise McpFailure(
+            "catalog provenance is incomplete; use a fully-qualified toolset name or regenerate the catalog with version metadata",
+            EXIT_PROTOCOL,
+        )
+    if any(not isinstance(item, dict) for item in catalog["toolsets"]):
+        raise McpFailure(f"invalid toolset entry in catalog: {catalog_path}", EXIT_PROTOCOL)
+    names = [str(item.get("name", "")) for item in catalog["toolsets"] if item.get("name")]
+    exact = [name for name in names if name == short_name]
+    suffix = [name for name in names if name.endswith("." + short_name)]
+    prefix = [name for name in names if name.startswith(short_name + ".")]
+    matches = exact or suffix or prefix
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise McpFailure(f"toolset not found in catalog: {short_name}", EXIT_USAGE)
+    raise McpFailure(f"ambiguous toolset {short_name!r}: {', '.join(sorted(matches))}", EXIT_USAGE)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Call a UE MCP tool in one initialized session.")
+    parser.add_argument("toolset", help="short/full toolset name, or '-' for a top-level tool")
+    parser.add_argument("tool", help="tool name")
+    parser.add_argument("arguments", nargs="?", default="{}", help="JSON object arguments")
+    parser.add_argument("output", nargs="?", help="optional output file")
+    parser.add_argument("--url", default=DEFAULT_URL, help=f"MCP endpoint (default: {DEFAULT_URL})")
+    parser.add_argument("--timeout", type=float, default=120.0, help="request timeout in seconds")
+    parser.add_argument("--allow-remote", action="store_true", help="allow a non-loopback endpoint; requires explicit user authorization")
+    parser.add_argument("--catalog", type=Path, default=CATALOG_PATH, help="toolset catalog path")
+    parser.add_argument("--allow-stale-catalog", action="store_true", help="permit short-name resolution from incomplete provenance; requires explicit risk acceptance")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    ns = parser.parse_args(argv)
+    try:
+        arguments = parse_json_object(ns.arguments, "arguments")
+        toolset = resolve_toolset(ns.toolset, ns.catalog, ns.allow_stale_catalog)
+        client = McpClient(ns.url, ns.timeout, "ue-engineering-loop-ue", allow_remote=ns.allow_remote)
+        client.initialize()
+        if toolset:
+            result = client.call_tool(
+                "call_tool",
+                {"toolset_name": toolset, "tool_name": ns.tool, "arguments": arguments},
+            )
+        else:
+            result = client.call_tool(ns.tool, arguments)
+        text = render_result(result)
+        if ns.output:
+            atomic_write_text(ns.output, text)
+            print(f"wrote {len(text)} chars to {ns.output}")
+        else:
+            print(text)
+        return 0
+    except McpFailure as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return exc.exit_code
+
 
 if __name__ == "__main__":
-    # command: python mcp_call.py <toolset|-> <tool> '<json args>' [outfile]
-    args = sys.argv[1:]
-    ts = None if args[0] == "-" else args[0]
-    tool = args[1]
-    a = json.loads(args[2]) if len(args) > 2 else {}
-    outfile = args[3] if len(args) > 3 else None
-    init()
-    out = call(tool, a, ts)
-    text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, indent=2)
-    if outfile:
-        with open(outfile, "w", encoding="utf-8") as f:
-            f.write(text)
-        print(f"wrote {len(text)} chars to {outfile}")
-    else:
-        print(text)
+    raise SystemExit(main())
